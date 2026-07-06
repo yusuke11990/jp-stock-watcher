@@ -34,7 +34,7 @@ PERIOD_YF = {"1ヶ月": "1mo", "3ヶ月": "3mo", "6ヶ月": "6mo", "1年": "1y",
 # price_dailyはローリング取得の都合上、実質1年分程度しか保持していない。
 # それを超える期間はDBに無いため、選択銘柄のみその場でyfinanceから取得する(全銘柄分をDBに溜めると
 # 10年分で500MB超になりGitHubコミット運用が破綻するため、意図的にオンデマンド取得にしている)。
-DB_HISTORY_DAYS = 300
+DB_HISTORY_DAYS = 400
 COMPACT_HEIGHT = 230
 YEARLY_HEIGHT = 360
 # fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
@@ -438,18 +438,30 @@ if selected_label:
     # --- 1行目: 株価 + AI判断日 ---
     period_label = st.radio("株価チャートの期間", list(PERIOD_DAYS.keys()), index=3, horizontal=True)
     days = PERIOD_DAYS[period_label]
+    price_source_note = None
     if days > DB_HISTORY_DAYS:
         price_hist = load_price_history_yf(selected_ticker, PERIOD_YF[period_label])
+        if price_hist.empty:
+            # クラウド環境からyfinanceへのアクセスが失敗する場合があるため、DB保有分にフォールバック
+            price_hist = load_price_history(selected_ticker, days)
+            if not price_hist.empty:
+                price_source_note = "長期データの取得に失敗したため、DBに保存されている範囲のみ表示しています"
     else:
         price_hist = load_price_history(selected_ticker, days)
     decisions = load_decisions(selected_ticker, days)
 
     st.caption("株価 + AI判断日")
+    if price_source_note:
+        st.caption(f"⚠ {price_source_note}")
     if price_hist.empty:
         st.info("価格データがありません")
     else:
         fig_price = go.Figure()
-        fig_price.add_trace(go.Scatter(x=price_hist["date"], y=price_hist["close"], name="株価", line=dict(width=2)))
+        fig_price.add_trace(go.Scatter(
+            x=price_hist["date"], y=price_hist["close"], name="株価",
+            line=dict(width=2, color="#1f6fd6"),
+            fill="tozeroy", fillcolor="rgba(31, 111, 214, 0.12)",
+        ))
         for action, color, symbol in [("buy", "green", "triangle-up"), ("sell", "red", "triangle-down")]:
             sub = decisions[decisions["action"] == action]
             if not sub.empty:
@@ -457,7 +469,17 @@ if selected_label:
                     x=sub["decision_date"], y=sub["price_at_decision"], mode="markers", name=action,
                     marker=dict(symbol=symbol, size=12, color=color),
                 ))
-        st.plotly_chart(_compact(fig_price, height=340), use_container_width=True)
+        last_row = price_hist.iloc[-1]
+        fig_price.add_annotation(
+            x=last_row["date"], y=last_row["close"], text=f"  {last_row['close']:,.0f}  ",
+            showarrow=False, xanchor="left", yanchor="middle", xshift=4,
+            font=dict(color="white", size=12), bgcolor="#1f6fd6", borderpad=3,
+        )
+        fig_price = _compact(fig_price, height=340)
+        fig_price.update_layout(margin=dict(l=35, r=70, t=28, b=25))
+        fig_price.update_yaxes(side="right", tickformat=",")
+        fig_price.update_xaxes(tickformat="%Y/%-m")
+        st.plotly_chart(fig_price, use_container_width=True)
 
     if not decisions.empty:
         with st.expander(f"この期間のAI判断ログ({len(decisions)}件)"):
