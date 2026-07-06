@@ -105,6 +105,30 @@ def load_data() -> tuple[pd.DataFrame, str | None]:
 
 
 @st.cache_data(ttl=300)
+def load_today_decisions() -> tuple[pd.DataFrame, str | None]:
+    """最新decision_dateの買い/売り判断一覧(v1/v2両方)。"""
+    conn = get_connection()
+    decision_date = conn.execute("SELECT MAX(decision_date) FROM decisions").fetchone()[0]
+    if decision_date is None:
+        conn.close()
+        return pd.DataFrame(), None
+
+    query = """
+    SELECT
+        d.ticker, t.name, t.sector, d.action, d.rule_version, d.grade, d.total_score,
+        d.confidence, d.reason, d.price_at_decision,
+        d.stop_loss_price, d.take_profit_price, d.risk_reward_ratio
+    FROM decisions d
+    JOIN tickers t ON t.ticker = d.ticker
+    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.action IN ('buy', 'sell')
+    ORDER BY d.rule_version, d.action, d.confidence DESC
+    """
+    df = pd.read_sql_query(query, conn, params=(decision_date,))
+    conn.close()
+    return df, decision_date
+
+
+@st.cache_data(ttl=300)
 def load_yearly(ticker: str) -> pd.DataFrame:
     conn = get_connection()
     query = """
@@ -214,6 +238,39 @@ if df.empty:
 
 st.caption(f"データ基準日(snapshot_date): {snapshot_date}　対象銘柄数: {len(df)}")
 
+# --- 買い/売り銘柄一覧(このダッシュボードで最も重要なセクション) ---
+today_decisions, decision_date = load_today_decisions()
+
+st.subheader("本日の買い・売り判断")
+if today_decisions.empty:
+    st.info("判断データがありません。先にdecide_rule.py/decide_composite.pyを実行してください。")
+else:
+    versions = sorted(today_decisions["rule_version"].dropna().unique().tolist())
+    default_version = "v2.0" if "v2.0" in versions else versions[0]
+    version_sel = st.radio(
+        "判断エンジン", versions, index=versions.index(default_version),
+        horizontal=True, help="v1.0=グレード×二値シグナル(実績重視)、v2.0=連続値テクニカル合成(検証中)",
+    )
+    st.caption(f"判断基準日(decision_date): {decision_date}")
+
+    version_df = today_decisions[today_decisions["rule_version"] == version_sel].rename(columns={
+        "ticker": "コード", "name": "銘柄名", "sector": "業種", "action": "判断", "grade": "グレード",
+        "total_score": "総合スコア", "confidence": "確信度", "reason": "理由", "price_at_decision": "判断時株価",
+        "stop_loss_price": "損切りライン", "take_profit_price": "利確ライン", "risk_reward_ratio": "リスクリワード比",
+    })
+
+    col_buy, col_sell = st.columns(2)
+    with col_buy:
+        buy_df = version_df[version_df["判断"] == "buy"].drop(columns=["判断", "rule_version"])
+        st.markdown(f"**買い候補 ({len(buy_df)}件)**")
+        st.dataframe(buy_df.round(2), use_container_width=True, hide_index=True, height=300)
+    with col_sell:
+        sell_df = version_df[version_df["判断"] == "sell"].drop(columns=["判断", "rule_version"])
+        st.markdown(f"**売り候補 ({len(sell_df)}件)**")
+        st.dataframe(sell_df.round(2), use_container_width=True, hide_index=True, height=300)
+
+st.divider()
+
 with st.sidebar:
     st.header("絞り込み")
     search = st.text_input("銘柄名・コードで検索")
@@ -229,6 +286,11 @@ with st.sidebar:
 
     score_min = st.slider("総合スコア(以上)", 0, 100, 0)
 
+filters_active = bool(
+    search or sector_sel != "すべて" or set(market_sel) != set(markets)
+    or set(grade_sel) != set(grades) or score_min > 0
+)
+
 filtered = df.copy()
 if search:
     filtered = filtered[
@@ -241,23 +303,24 @@ filtered = filtered[filtered["grade"].isin(grade_sel)]
 filtered = filtered[filtered["total_score"].fillna(-1) >= score_min]
 filtered = filtered.sort_values("total_score", ascending=False)
 
-st.subheader(f"スクリーニング結果 ({len(filtered)}件)")
+if filters_active:
+    st.subheader(f"スクリーニング結果 ({len(filtered)}件)")
 
-display_df = filtered.rename(columns={**CATEGORY_COLS, "total_score": "総合スコア", "grade": "グレード",
-                                       "ticker": "コード", "name": "銘柄名", "sector": "業種", "market": "市場",
-                                       "per": "PER", "pbr": "PBR", "roe": "ROE", "dividend_yield": "配当利回り",
-                                       "price": "株価", "sector_rank": "業種内順位", "sector_size": "業種銘柄数"})
-display_cols = ["コード", "銘柄名", "業種", "市場", "株価", "PER", "PBR", "ROE",
-                "安全性", "成長性", "収益性", "効率性", "割安性", "還元性",
-                "総合スコア", "グレード", "業種内順位", "業種銘柄数"]
-st.dataframe(
-    display_df[display_cols].round(1),
-    use_container_width=True,
-    hide_index=True,
-    height=350,
-)
+    display_df = filtered.rename(columns={**CATEGORY_COLS, "total_score": "総合スコア", "grade": "グレード",
+                                           "ticker": "コード", "name": "銘柄名", "sector": "業種", "market": "市場",
+                                           "per": "PER", "pbr": "PBR", "roe": "ROE", "dividend_yield": "配当利回り",
+                                           "price": "株価", "sector_rank": "業種内順位", "sector_size": "業種銘柄数"})
+    display_cols = ["コード", "銘柄名", "業種", "市場", "株価", "PER", "PBR", "ROE",
+                    "安全性", "成長性", "収益性", "効率性", "割安性", "還元性",
+                    "総合スコア", "グレード", "業種内順位", "業種銘柄数"]
+    st.dataframe(
+        display_df[display_cols].round(1),
+        use_container_width=True,
+        hide_index=True,
+        height=350,
+    )
+    st.divider()
 
-st.divider()
 st.subheader("個別銘柄の詳細")
 
 ticker_options = filtered["ticker"] + " " + filtered["name"].fillna("")
