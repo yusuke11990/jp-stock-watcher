@@ -145,6 +145,22 @@ CREATE TABLE IF NOT EXISTS fundamentals_yearly (
     PRIMARY KEY (ticker, fiscal_year_end)
 );
 CREATE INDEX IF NOT EXISTS idx_fundamentals_yearly_ticker ON fundamentals_yearly(ticker, fiscal_year_end);
+
+CREATE TABLE IF NOT EXISTS edinet_documents (
+    doc_id TEXT PRIMARY KEY,
+    sec_code TEXT,
+    doc_type_code TEXT,
+    period_end TEXT,
+    submit_date_time TEXT,
+    fetched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_edinet_documents_sec_code ON edinet_documents(sec_code, period_end);
+
+CREATE TABLE IF NOT EXISTS edinet_scanned_dates (
+    scan_date TEXT PRIMARY KEY,
+    doc_count INTEGER,
+    scanned_at TEXT
+);
 """
 
 # fundamentals_weeklyへ追加するカラム(6軸スコアリング用)。既存DBには起動時にマイグレーションする。

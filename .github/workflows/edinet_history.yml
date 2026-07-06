@@ -1,0 +1,31 @@
+name: EDINET Fundamentals History
+
+on:
+  schedule:
+    - cron: "30 15 * * 0"  # 毎週日曜 15:30 UTC(JST 24:30)。有価証券報告書は年1回提出なので週次で十分
+  workflow_dispatch: {}
+
+concurrency:
+  group: stock-db
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/fetch_edinet_history.py --time-budget-sec 1500
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+      - name: Commit updated DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stock.db
+          git diff --cached --quiet || git commit -m "chore: update EDINET fundamentals history $(date -u +%Y-%m-%d)"
+          git push

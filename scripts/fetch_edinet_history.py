@@ -2,8 +2,13 @@
 
 1件の有価証券報告書には「主要な経営指標等の推移」として直近5年分
 (当期/前期/前々期/三期前/四期前)の連結決算サマリーが含まれている。
-これを約5年おきの過去の提出書類まで遡って複数件取得することで、
-fundamentals_yearlyに15年超の推移を積み上げる。
+書類の検索はfetch_edinet_index.pyが事前に構築したローカルインデックス
+(edinet_documentsテーブル)を参照するだけで済み、API呼び出しは
+CSVダウンロードのみになる(1銘柄あたりの検索コストがほぼゼロ)。
+
+有価証券報告書は年1回しか提出されないため、全銘柄への初回バックフィルが
+終わったあとは月次〜年次程度の低頻度実行で十分(fetch_fundamentals.pyのような
+日次ローリングは不要)。
 
 APIキーは環境変数EDINET_API_KEYから読む(GitHub Secretsに格納想定)。
 連結値は「コンテキストID」に_NonConsolidatedMember等の接尾辞が付かない
@@ -105,23 +110,30 @@ def _api_key() -> str:
     return key
 
 
-def find_securities_report(sec_code: str, around_date: "datetime.date", window_days: int = 120):
-    """around_dateから過去window_days日を遡り、secCodeに一致する有価証券報告書を探す"""
-    key = _api_key()
-    for offset in range(window_days):
-        d = around_date - timedelta(days=offset)
-        resp = requests.get(
-            f"{EDINET_BASE}/documents.json",
-            params={"date": d.isoformat(), "type": 2, "Subscription-Key": key},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        for item in data.get("results", []):
-            if item.get("secCode") == sec_code and item.get("docTypeCode") == SECURITIES_REPORT_DOC_TYPE:
-                return item
-        time.sleep(0.3)
-    return None
+def find_indexed_reports(conn, sec_code: str, max_filings: int) -> list[dict]:
+    """fetch_edinet_index.pyが構築したローカルインデックスから、期末日が新しい順に
+    有価証券報告書を取得する。期末日が近すぎる(同一世代の重複)ものは間引く。
+    """
+    rows = conn.execute(
+        """
+        SELECT doc_id, period_end FROM edinet_documents
+        WHERE sec_code = ? AND doc_type_code = ? AND period_end IS NOT NULL
+        ORDER BY period_end DESC
+        """,
+        (sec_code, SECURITIES_REPORT_DOC_TYPE),
+    ).fetchall()
+
+    selected = []
+    last_period_end = None
+    for doc_id, period_end_str in rows:
+        period_end = datetime.strptime(period_end_str, "%Y-%m-%d").date()
+        if last_period_end is not None and (last_period_end - period_end).days < 365 * 3:
+            continue  # 同じ~5年世代内の重複書類はスキップ
+        selected.append({"docID": doc_id, "periodEnd": period_end_str})
+        last_period_end = period_end
+        if len(selected) >= max_filings:
+            break
+    return selected
 
 
 def download_csv_tables(doc_id: str) -> list[pd.DataFrame]:
@@ -248,17 +260,11 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
 
 
 def fetch_ticker_history(conn, ticker: str, sec_code: str, lookback_filings: int = 3) -> int:
-    """約5年おきに過去のlookback_filings件の有価証券報告書を遡って取得する"""
+    """ローカルインデックスから対象銘柄の有価証券報告書を探し、CSVをダウンロードして取り込む"""
+    docs = find_indexed_reports(conn, sec_code, lookback_filings)
     total_written = 0
-    search_date = datetime.now(JST).date()
-    seen_doc_ids = set()
 
-    for _ in range(lookback_filings):
-        doc = find_securities_report(sec_code, search_date)
-        if doc is None or doc["docID"] in seen_doc_ids:
-            break
-        seen_doc_ids.add(doc["docID"])
-
+    for doc in docs:
         tables = download_csv_tables(doc["docID"])
         period_end = datetime.strptime(doc["periodEnd"], "%Y-%m-%d").date()
 
@@ -266,33 +272,68 @@ def fetch_ticker_history(conn, ticker: str, sec_code: str, lookback_filings: int
             yearly_metrics = extract_yearly_metrics(df)
             if yearly_metrics:
                 total_written += upsert_yearly(conn, ticker, period_end, yearly_metrics)
-
-        # 次はこの提出書類が拾った最古年度(四期前)より前の提出書類を探す。
-        # 提出日は決算期末の約3ヶ月後(法定提出期限)なので、その分を加算した日付を起点に遡る
-        next_period_end = period_end.replace(year=period_end.year - 4)
-        search_date = next_period_end + timedelta(days=110)
         time.sleep(1)
 
     return total_written
 
 
+def log_result(conn, run_date: str, ticker: str, status: str, error_message: str = "") -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO fetch_log (run_date, job_type, ticker, status, error_message) VALUES (?, ?, ?, ?, ?)",
+            (run_date, "edinet", ticker, status, error_message),
+        )
+
+
+def load_rolling_targets(conn, limit: int | None) -> list[str]:
+    """edinetジョブでまだ処理していない(またはより古くに処理した)銘柄から順に選ぶ"""
+    query = """
+    SELECT t.ticker
+    FROM tickers t
+    LEFT JOIN (
+        SELECT ticker, MAX(run_date) AS last_run FROM fetch_log WHERE job_type = 'edinet' GROUP BY ticker
+    ) f ON t.ticker = f.ticker
+    WHERE t.is_active = 1
+    ORDER BY f.last_run IS NOT NULL, f.last_run ASC
+    """
+    tickers = [r[0] for r in conn.execute(query)]
+    return tickers[:limit] if limit else tickers
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tickers", nargs="+", required=True, help="例: 7203.T 1301.T 8306.T")
+    parser.add_argument("--tickers", nargs="+", default=None, help="例: 7203.T 1301.T 8306.T (省略時は全銘柄をローリング処理)")
+    parser.add_argument("--limit", type=int, default=None, help="ローリング処理する銘柄数の上限(検証用)")
     parser.add_argument("--lookback-filings", type=int, default=3)
+    parser.add_argument("--time-budget-sec", type=int, default=20 * 60)
     args = parser.parse_args()
 
     conn = get_connection()
-    for ticker in args.tickers:
+    run_date = datetime.now(JST).strftime("%Y-%m-%d")
+
+    targets = args.tickers if args.tickers else load_rolling_targets(conn, args.limit)
+    start_time = time.monotonic()
+    success, failed = 0, 0
+
+    for i, ticker in enumerate(targets, start=1):
+        if time.monotonic() - start_time > args.time_budget_sec:
+            print(f"時間予算に到達。{i - 1}/{len(targets)}件処理して終了")
+            break
         code = ticker.split(".")[0]
         sec_code = f"{code}0"
-        print(f"{ticker}: 検索中...")
         try:
             written = fetch_ticker_history(conn, ticker, sec_code, args.lookback_filings)
-            print(f"  {written}件の年次データを保存")
+            log_result(conn, run_date, ticker, "success")
+            success += 1
         except Exception as e:
-            print(f"  失敗: {e}")
+            written = 0
+            log_result(conn, run_date, ticker, "failed", str(e))
+            failed += 1
+        if i % 20 == 0:
+            print(f"[{i}/{len(targets)}] success={success} failed={failed}")
+
     conn.close()
+    print(f"完了: success={success}, failed={failed}")
 
 
 if __name__ == "__main__":

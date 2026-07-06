@@ -1,0 +1,31 @@
+name: EDINET Document Index
+
+on:
+  schedule:
+    - cron: "0 15 * * *"  # 毎日 15:00 UTC(JST 24:00)。書類一覧のスキャンなので市場休場日でも実行してよい
+  workflow_dispatch: {}
+
+concurrency:
+  group: stock-db
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/fetch_edinet_index.py --time-budget-sec 1200
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+      - name: Commit updated DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stock.db
+          git diff --cached --quiet || git commit -m "chore: update EDINET document index $(date -u +%Y-%m-%d)"
+          git push
