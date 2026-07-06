@@ -54,6 +54,24 @@ def load_data() -> tuple[pd.DataFrame, str | None]:
     return df, snapshot_date
 
 
+@st.cache_data(ttl=300)
+def load_yearly(ticker: str) -> pd.DataFrame:
+    conn = get_connection()
+    query = """
+    SELECT fiscal_year_end, revenue, operating_income, ordinary_income, net_income,
+           operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
+           total_assets, total_liabilities, equity, equity_ratio,
+           operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents
+    FROM fundamentals_yearly
+    WHERE ticker = ?
+    ORDER BY fiscal_year_end ASC
+    """
+    df = pd.read_sql_query(query, conn, params=(ticker,))
+    conn.close()
+    df["year"] = pd.to_datetime(df["fiscal_year_end"]).dt.year
+    return df
+
+
 df, snapshot_date = load_data()
 
 if df.empty:
@@ -141,3 +159,55 @@ if selected_label:
         margin=dict(l=40, r=40, t=40, b=40),
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    yearly = load_yearly(selected_ticker)
+    if yearly.empty:
+        st.info("この銘柄の複数年推移データはまだありません(次回のfetch_fundamentals.py実行で蓄積されます)。")
+    else:
+        st.subheader("業績推移")
+        fig_perf = go.Figure()
+        fig_perf.add_bar(x=yearly["year"], y=yearly["revenue"], name="売上高")
+        fig_perf.add_trace(go.Scatter(x=yearly["year"], y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2"))
+        fig_perf.add_trace(go.Scatter(x=yearly["year"], y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2"))
+        fig_perf.update_layout(
+            yaxis=dict(title="売上高"),
+            yaxis2=dict(title="利益率(%)", overlaying="y", side="right"),
+            margin=dict(l=40, r=40, t=20, b=20),
+        )
+        st.plotly_chart(fig_perf, use_container_width=True)
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.subheader("配当推移")
+            fig_div = go.Figure()
+            fig_div.add_bar(x=yearly["year"], y=yearly["dividend_per_share"], name="1株配当")
+            fig_div.add_trace(go.Scatter(x=yearly["year"], y=yearly["eps"], name="EPS", yaxis="y2"))
+            fig_div.update_layout(
+                yaxis=dict(title="1株配当"),
+                yaxis2=dict(title="EPS", overlaying="y", side="right"),
+                margin=dict(l=40, r=40, t=20, b=20),
+            )
+            st.plotly_chart(fig_div, use_container_width=True)
+
+        with col_b:
+            st.subheader("財務推移")
+            fig_bs = go.Figure()
+            fig_bs.add_bar(x=yearly["year"], y=yearly["equity"], name="純資産")
+            fig_bs.add_bar(x=yearly["year"], y=yearly["total_liabilities"], name="負債")
+            fig_bs.add_trace(go.Scatter(x=yearly["year"], y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2"))
+            fig_bs.update_layout(
+                barmode="group",
+                yaxis=dict(title="金額"),
+                yaxis2=dict(title="自己資本比率(%)", overlaying="y", side="right"),
+                margin=dict(l=40, r=40, t=20, b=20),
+            )
+            st.plotly_chart(fig_bs, use_container_width=True)
+
+        st.subheader("キャッシュフロー推移")
+        fig_cf = go.Figure()
+        fig_cf.add_bar(x=yearly["year"], y=yearly["operating_cf"], name="営業CF")
+        fig_cf.add_bar(x=yearly["year"], y=yearly["investing_cf"], name="投資CF")
+        fig_cf.add_bar(x=yearly["year"], y=yearly["financing_cf"], name="財務CF")
+        fig_cf.add_trace(go.Scatter(x=yearly["year"], y=yearly["free_cf"], name="フリーCF", mode="lines+markers"))
+        fig_cf.update_layout(barmode="relative", margin=dict(l=40, r=40, t=20, b=20))
+        st.plotly_chart(fig_cf, use_container_width=True)

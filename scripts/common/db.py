@@ -119,6 +119,32 @@ CREATE TABLE IF NOT EXISTS decision_outcomes (
     evaluated_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (decision_id) REFERENCES decisions(decision_id)
 );
+
+CREATE TABLE IF NOT EXISTS fundamentals_yearly (
+    ticker TEXT NOT NULL,
+    fiscal_year_end TEXT NOT NULL,
+    revenue REAL,
+    operating_income REAL,
+    ordinary_income REAL,
+    net_income REAL,
+    operating_margin REAL,
+    net_margin REAL,
+    eps REAL,
+    dividend_per_share REAL,
+    payout_ratio REAL,
+    total_assets REAL,
+    total_liabilities REAL,
+    equity REAL,
+    equity_ratio REAL,
+    operating_cf REAL,
+    investing_cf REAL,
+    financing_cf REAL,
+    free_cf REAL,
+    cash_and_equivalents REAL,
+    updated_at TEXT,
+    PRIMARY KEY (ticker, fiscal_year_end)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_yearly_ticker ON fundamentals_yearly(ticker, fiscal_year_end);
 """
 
 # fundamentals_weeklyへ追加するカラム(6軸スコアリング用)。既存DBには起動時にマイグレーションする。
@@ -139,6 +165,15 @@ FUNDAMENTALS_EXTRA_COLUMNS = {
     "current_ratio": "REAL",
     "net_debt_to_ebitda": "REAL",
     "interest_coverage_ratio": "REAL",
+    "psr": "REAL",
+    "pcfr": "REAL",
+    "operating_cashflow": "REAL",
+    "doe": "REAL",
+    "dividend_growth_1y": "REAL",
+    "ordinary_income": "REAL",
+    "ordinary_income_margin": "REAL",
+    "ordinary_income_growth_1y": "REAL",
+    "operating_cf_margin": "REAL",
 }
 
 

@@ -32,15 +32,24 @@ BALANCE_SHEET_LABELS = {
     "equity": ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"],
     "current_assets": ["Current Assets"],
     "current_liabilities": ["Current Liabilities"],
+    "total_liabilities": ["Total Liabilities Net Minority Interest", "Total Liab"],
+    "cash": ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"],
 }
 FINANCIALS_LABELS = {
     "revenue": ["Total Revenue"],
     "operating_income": ["Operating Income"],
     "net_income": ["Net Income", "Net Income Common Stockholders"],
     "interest_expense": ["Interest Expense"],
+    # 経常利益(日本基準の"税引前当期純利益"に近い概念)はPretax Incomeで代替する
+    "ordinary_income": ["Pretax Income"],
 }
 CASHFLOW_LABELS = {
     "buyback": ["Repurchase Of Capital Stock"],
+    "operating_cf": ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"],
+    "investing_cf": ["Investing Cash Flow", "Cash Flow From Continuing Investing Activities"],
+    "financing_cf": ["Financing Cash Flow", "Cash Flow From Continuing Financing Activities"],
+    "free_cf": ["Free Cash Flow"],
+    "dividends_paid": ["Cash Dividends Paid", "Common Stock Dividend Paid"],
 }
 
 
@@ -97,8 +106,10 @@ def compute_extra_fields(data: dict) -> dict:
     op_income_row = _get_row(fin, FINANCIALS_LABELS["operating_income"])
     net_income_row = _get_row(fin, FINANCIALS_LABELS["net_income"])
     interest_expense_row = _get_row(fin, FINANCIALS_LABELS["interest_expense"])
+    ordinary_income_row = _get_row(fin, FINANCIALS_LABELS["ordinary_income"])
 
     buyback_row = _get_row(cf, CASHFLOW_LABELS["buyback"])
+    operating_cf_row = _get_row(cf, CASHFLOW_LABELS["operating_cf"])
 
     total_assets = total_assets_row.iloc[0] if total_assets_row is not None and len(total_assets_row) else None
     equity = equity_row.iloc[0] if equity_row is not None and len(equity_row) else None
@@ -175,7 +186,120 @@ def compute_extra_fields(data: dict) -> dict:
     else:
         result["interest_coverage_ratio"] = None
 
+    # 割安性: PSR(株価売上高比率)・PCFR(株価営業CF倍率)。PERが効かない赤字/成長企業も評価できる
+    operating_cf_latest = operating_cf_row.iloc[0] if operating_cf_row is not None and len(operating_cf_row) else None
+    result["operating_cashflow"] = operating_cf_latest
+    result["psr"] = (market_cap / revenue_latest) if market_cap and revenue_latest else None
+    result["pcfr"] = (market_cap / operating_cf_latest) if market_cap and operating_cf_latest and operating_cf_latest > 0 else None
+    result["operating_cf_margin"] = (operating_cf_latest / revenue_latest) if operating_cf_latest and revenue_latest else None
+
+    # 還元性: DOE(自己資本配当率) = 配当金総額 / 自己資本
+    div_total_for_doe = div_total
+    result["doe"] = (div_total_for_doe / equity) if div_total_for_doe and equity else None
+
+    # 還元性: 配当成長率(直近の年間配当総額の前年比)
+    divs = data.get("dividends")
+    result["dividend_growth_1y"] = _dividend_growth_1y(divs)
+
+    # 収益性・成長性: 経常利益(Pretax Incomeで代替)
+    ordinary_income_latest, ordinary_income_prev = _first_two(ordinary_income_row)
+    result["ordinary_income"] = ordinary_income_latest
+    result["ordinary_income_margin"] = (ordinary_income_latest / revenue_latest) if ordinary_income_latest and revenue_latest else None
+    result["ordinary_income_growth_1y"] = (
+        (ordinary_income_latest - ordinary_income_prev) / abs(ordinary_income_prev) if ordinary_income_prev else None
+    )
+
     return result
+
+
+def _dividend_growth_1y(divs) -> float | None:
+    """直近12ヶ月の配当総額と、その前の12ヶ月の配当総額を比較した成長率"""
+    if divs is None or len(divs) < 2:
+        return None
+    import pandas as pd
+
+    now = divs.index.max()
+    last_12m = divs[divs.index > now - pd.DateOffset(months=12)].sum()
+    prev_12m = divs[(divs.index <= now - pd.DateOffset(months=12)) & (divs.index > now - pd.DateOffset(months=24))].sum()
+    if prev_12m == 0:
+        return None
+    return (last_12m - prev_12m) / prev_12m
+
+
+def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
+    """複数年分の業績・財務・配当・CF推移をfundamentals_yearlyへ保存する(ダッシュボードの推移グラフ用)"""
+    bs, fin, cf = data["balance_sheet"], data["financials"], data["cashflow"]
+    if fin is None or fin.empty:
+        return 0
+
+    revenue_row = _get_row(fin, FINANCIALS_LABELS["revenue"])
+    op_income_row = _get_row(fin, FINANCIALS_LABELS["operating_income"])
+    net_income_row = _get_row(fin, FINANCIALS_LABELS["net_income"])
+    ordinary_income_row = _get_row(fin, FINANCIALS_LABELS["ordinary_income"])
+    total_assets_row = _get_row(bs, BALANCE_SHEET_LABELS["total_assets"])
+    total_liabilities_row = _get_row(bs, BALANCE_SHEET_LABELS["total_liabilities"])
+    equity_row = _get_row(bs, BALANCE_SHEET_LABELS["equity"])
+    cash_row = _get_row(bs, BALANCE_SHEET_LABELS["cash"])
+    operating_cf_row = _get_row(cf, CASHFLOW_LABELS["operating_cf"])
+    investing_cf_row = _get_row(cf, CASHFLOW_LABELS["investing_cf"])
+    financing_cf_row = _get_row(cf, CASHFLOW_LABELS["financing_cf"])
+    free_cf_row = _get_row(cf, CASHFLOW_LABELS["free_cf"])
+    dividends_paid_row = _get_row(cf, CASHFLOW_LABELS["dividends_paid"])
+
+    shares = data["info"].get("sharesOutstanding")
+    now_iso = datetime.now(JST).isoformat()
+    rows_written = 0
+
+    with conn:
+        for col in fin.columns:
+            fiscal_year_end = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)
+
+            def val(row):
+                return row.get(col) if row is not None and col in row.index else None
+
+            revenue = val(revenue_row)
+            net_income = val(net_income_row)
+            op_income = val(op_income_row)
+            equity = val(equity_row)
+            total_assets = val(total_assets_row)
+            # 発行済株式数は直近の値で近似(過去の実株数はyfinanceから取得できないため)
+            eps_year = (net_income / shares) if net_income and shares else None
+            dps_year = abs(val(dividends_paid_row) / shares) if val(dividends_paid_row) and shares else None
+            payout_ratio_year = (dps_year / eps_year) if dps_year and eps_year and eps_year > 0 else None
+
+            conn.execute(
+                """
+                INSERT INTO fundamentals_yearly
+                    (ticker, fiscal_year_end, revenue, operating_income, ordinary_income, net_income,
+                     operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
+                     total_assets, total_liabilities, equity, equity_ratio,
+                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
+                    revenue=excluded.revenue, operating_income=excluded.operating_income,
+                    ordinary_income=excluded.ordinary_income, net_income=excluded.net_income,
+                    operating_margin=excluded.operating_margin, net_margin=excluded.net_margin,
+                    eps=excluded.eps, dividend_per_share=excluded.dividend_per_share,
+                    payout_ratio=excluded.payout_ratio, total_assets=excluded.total_assets,
+                    total_liabilities=excluded.total_liabilities, equity=excluded.equity,
+                    equity_ratio=excluded.equity_ratio, operating_cf=excluded.operating_cf,
+                    investing_cf=excluded.investing_cf, financing_cf=excluded.financing_cf,
+                    free_cf=excluded.free_cf, cash_and_equivalents=excluded.cash_and_equivalents,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    ticker, fiscal_year_end, revenue, op_income, val(ordinary_income_row), net_income,
+                    (op_income / revenue) if op_income and revenue else None,
+                    (net_income / revenue) if net_income and revenue else None,
+                    eps_year, dps_year, payout_ratio_year,
+                    total_assets, val(total_liabilities_row), equity,
+                    (equity / total_assets * 100) if equity and total_assets else None,
+                    val(operating_cf_row), val(investing_cf_row), val(financing_cf_row),
+                    val(free_cf_row), val(cash_row), now_iso,
+                ),
+            )
+            rows_written += 1
+    return rows_written
 
 
 def upsert_fundamentals(conn, ticker: str, snapshot_date: str, info: dict, extra: dict, bs, fin, divs) -> None:
@@ -261,6 +385,7 @@ def main():
             data = fetch_all(ticker)
             extra = compute_extra_fields(data)
             upsert_fundamentals(conn, ticker, run_date, data["info"], extra, data["balance_sheet"], data["financials"], data["dividends"])
+            upsert_yearly_fundamentals(conn, ticker, data)
             log_result(conn, run_date, ticker, "success")
             guard.record_success()
             success += 1
