@@ -305,6 +305,21 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
     return rows_written
 
 
+def _clean_numeric(value):
+    """yfinanceがtrailingPE等で'Infinity'文字列やinf/nanを返すことがあり、
+    そのままSQLiteに入れると型混在(float/str)でpandas.rank()が壊れるため、
+    数値として不正な値はNoneに丸める。"""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
 def upsert_fundamentals(conn, ticker: str, snapshot_date: str, info: dict, extra: dict, bs, fin, divs) -> None:
     equity_row = _get_row(bs, BALANCE_SHEET_LABELS["equity"])
     equity = equity_row.iloc[0] if equity_row is not None and len(equity_row) else None
@@ -330,6 +345,8 @@ def upsert_fundamentals(conn, ticker: str, snapshot_date: str, info: dict, extra
         "dividend_history_count": len(divs) if divs is not None else 0,
         **extra,
     }
+    skip_clean = {"ticker", "snapshot_date", "earnings_years", "dividend_history_count"}
+    row = {k: (v if k in skip_clean else _clean_numeric(v)) for k, v in row.items()}
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
     updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in ("ticker", "snapshot_date"))
