@@ -1,0 +1,30 @@
+name: Evaluate Decisions
+
+on:
+  schedule:
+    - cron: "35 7 * * 1-5"  # 平日 07:35 UTC(JST 16:35、判断確定の後)
+  workflow_dispatch: {}
+
+concurrency:
+  group: stock-db
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/evaluate_decisions.py
+      - run: python scripts/reports/rule_performance.py
+      - name: Commit updated DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stock.db
+          git diff --cached --quiet || git commit -m "chore: evaluate decisions $(date -u +%Y-%m-%d)"
+          git push

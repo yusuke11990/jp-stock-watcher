@@ -1,0 +1,46 @@
+min_sector_sample_size: 5
+
+category_weights:
+  safety: 0.15
+  growth: 0.20
+  profitability: 0.20
+  efficiency: 0.15
+  valuation: 0.15
+  shareholder_return: 0.15
+
+grade_thresholds:
+  S: 85
+  A: 70
+  B: 55
+  C: 40
+  D: 25
+  # E: 25未満
+
+category_metrics:
+  safety:
+    - {col: equity_ratio, higher_is_better: true, weight: 0.30}
+    - {col: current_ratio, higher_is_better: true, weight: 0.20}
+    - {col: interest_bearing_debt_to_market_cap, higher_is_better: false, weight: 0.20}
+    - {col: net_debt_to_ebitda, higher_is_better: false, weight: 0.15}
+    - {col: interest_coverage_ratio, higher_is_better: true, weight: 0.15}
+  growth:
+    - {col: revenue_growth_1y, higher_is_better: true, weight: 0.25}
+    - {col: revenue_growth_3y_cagr, higher_is_better: true, weight: 0.30}
+    - {col: operating_income_growth_1y, higher_is_better: true, weight: 0.20}
+    - {col: eps_growth_1y, higher_is_better: true, weight: 0.15}
+    - {col: eps_growth_3y_cagr, higher_is_better: true, weight: 0.10}
+  profitability:
+    - {col: roe, higher_is_better: true, weight: 0.35}
+    - {col: operating_margin, higher_is_better: true, weight: 0.35}
+    - {col: net_margin, higher_is_better: true, weight: 0.30}
+  efficiency:
+    - {col: roa, higher_is_better: true, weight: 0.50}
+    - {col: asset_turnover, higher_is_better: true, weight: 0.50}
+  valuation:
+    - {col: per, higher_is_better: false, weight: 0.55}
+    - {col: pbr, higher_is_better: false, weight: 0.45}
+  shareholder_return:
+    - {col: dividend_yield, higher_is_better: true, weight: 0.35}
+    - {col: payout_ratio, special: payout_ratio_logic, weight: 0.20}
+    - {col: total_shareholder_return_yield, higher_is_better: true, weight: 0.30}
+    - {col: dividend_history_count, higher_is_better: true, weight: 0.15}

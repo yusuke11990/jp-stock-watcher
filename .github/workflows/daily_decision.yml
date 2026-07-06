@@ -1,0 +1,33 @@
+name: Daily Scoring and Decision
+
+on:
+  schedule:
+    - cron: "20 7 * * 1-5"  # 平日 07:20 UTC(JST 16:20、価格・ファンダ取得の後)
+  workflow_dispatch: {}
+
+concurrency:
+  group: stock-db
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/scoring/compute_scores.py
+      - run: python scripts/decisions/decide_rule.py
+      - run: python scripts/notify_discord.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Commit updated DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stock.db
+          git diff --cached --quiet || git commit -m "chore: update scores and decisions $(date -u +%Y-%m-%d)"
+          git push
