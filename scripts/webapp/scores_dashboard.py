@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.db import get_connection  # noqa: E402
@@ -28,7 +29,12 @@ CATEGORY_COLS = {
     "score_valuation": "割安性",
     "score_shareholder_return": "還元性",
 }
-PERIOD_DAYS = {"1ヶ月": 30, "3ヶ月": 90, "6ヶ月": 180, "1年": 365, "3年": 365 * 3}
+PERIOD_DAYS = {"1ヶ月": 30, "3ヶ月": 90, "6ヶ月": 180, "1年": 365, "3年": 365 * 3, "5年": 365 * 5, "10年": 365 * 10}
+PERIOD_YF = {"1ヶ月": "1mo", "3ヶ月": "3mo", "6ヶ月": "6mo", "1年": "1y", "3年": "3y", "5年": "5y", "10年": "10y"}
+# price_dailyはローリング取得の都合上、実質1年分程度しか保持していない。
+# それを超える期間はDBに無いため、選択銘柄のみその場でyfinanceから取得する(全銘柄分をDBに溜めると
+# 10年分で500MB超になりGitHubコミット運用が破綻するため、意図的にオンデマンド取得にしている)。
+DB_HISTORY_DAYS = 300
 COMPACT_HEIGHT = 230
 YEARLY_HEIGHT = 360
 # fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
@@ -181,6 +187,21 @@ def load_price_history(ticker: str, days: int) -> pd.DataFrame:
     """
     df = pd.read_sql_query(query, conn, params=(ticker, f"-{days} days"), parse_dates=["date"])
     conn.close()
+    return df
+
+
+@st.cache_data(ttl=3600)
+def load_price_history_yf(ticker: str, yf_period: str) -> pd.DataFrame:
+    """DBに無い長期(3年超)の株価は選択銘柄のみその場でyfinanceから取得する。"""
+    try:
+        raw = yf.download(ticker, period=yf_period, progress=False, auto_adjust=False)
+    except Exception:
+        return pd.DataFrame(columns=["date", "close"])
+    if raw.empty:
+        return pd.DataFrame(columns=["date", "close"])
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.get_level_values(0)
+    df = raw[["Close"]].reset_index().rename(columns={"Date": "date", "Close": "close"})
     return df
 
 
@@ -417,7 +438,10 @@ if selected_label:
     # --- 1行目: 株価 + AI判断日 ---
     period_label = st.radio("株価チャートの期間", list(PERIOD_DAYS.keys()), index=3, horizontal=True)
     days = PERIOD_DAYS[period_label]
-    price_hist = load_price_history(selected_ticker, days)
+    if days > DB_HISTORY_DAYS:
+        price_hist = load_price_history_yf(selected_ticker, PERIOD_YF[period_label])
+    else:
+        price_hist = load_price_history(selected_ticker, days)
     decisions = load_decisions(selected_ticker, days)
 
     st.caption("株価 + AI判断日")
