@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "scores-dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m", "streamlit", "run", "scripts/webapp/scores_dashboard.py",
+        "--server.port=8577", "--server.headless=true"
+      ],
+      "port": 8577
+    }
+  ]
+}
