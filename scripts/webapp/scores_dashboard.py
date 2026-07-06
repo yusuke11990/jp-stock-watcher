@@ -279,6 +279,28 @@ if df.empty:
 
 st.caption(f"データ基準日(snapshot_date): {snapshot_date}　対象銘柄数: {len(df)}")
 
+st.session_state.setdefault("jump_to_ticker", None)
+st.session_state.setdefault("jump_pending", False)
+
+
+def _render_clickable_decisions_table(table: pd.DataFrame, key: str) -> None:
+    """コード列を「.T」無しで表示し、行クリックでその銘柄の詳細にジャンプできる表を描画する。"""
+    table = table.reset_index(drop=True)
+    raw_tickers = table["コード"].tolist()
+    display_table = table.copy()
+    display_table["コード"] = display_table["コード"].str.replace(".T", "", regex=False)
+    event = st.dataframe(
+        display_table.round(2), use_container_width=True, hide_index=True, height=300,
+        on_select="rerun", selection_mode="single-row", key=key,
+    )
+    if event and event.selection and event.selection.rows:
+        clicked_ticker = raw_tickers[event.selection.rows[0]]
+        if clicked_ticker != st.session_state["jump_to_ticker"]:
+            st.session_state["jump_to_ticker"] = clicked_ticker
+            st.session_state["jump_pending"] = True
+            st.rerun()
+
+
 # --- 買い/売り銘柄一覧(このダッシュボードで最も重要なセクション) ---
 today_decisions, decision_date = load_today_decisions()
 
@@ -300,15 +322,16 @@ else:
         "stop_loss_price": "損切りライン", "take_profit_price": "利確ライン", "risk_reward_ratio": "リスクリワード比",
     })
 
+    st.caption("行をクリックするとその銘柄の詳細に移動します")
     col_buy, col_sell = st.columns(2)
     with col_buy:
         buy_df = version_df[version_df["判断"] == "buy"].drop(columns=["判断", "rule_version"])
         st.markdown(f"**買い候補 ({len(buy_df)}件)**")
-        st.dataframe(buy_df.round(2), use_container_width=True, hide_index=True, height=300)
+        _render_clickable_decisions_table(buy_df, key=f"buy_table_{version_sel}")
     with col_sell:
         sell_df = version_df[version_df["判断"] == "sell"].drop(columns=["判断", "rule_version"])
         st.markdown(f"**売り候補 ({len(sell_df)}件)**")
-        st.dataframe(sell_df.round(2), use_container_width=True, hide_index=True, height=300)
+        _render_clickable_decisions_table(sell_df, key=f"sell_table_{version_sel}")
 
 st.divider()
 
@@ -364,8 +387,25 @@ if filters_active:
 
 st.subheader("個別銘柄の詳細")
 
-ticker_options = filtered["ticker"] + " " + filtered["name"].fillna("")
-selected_label = st.selectbox("銘柄を選択", ticker_options.tolist())
+ticker_options = (filtered["ticker"] + " " + filtered["name"].fillna("")).tolist()
+
+# 買い/売り一覧のクリック、またはサイドバー絞り込みで選択中の銘柄が候補から消えても
+# 選択状態を保てるよう、現在値がoptionsに無ければ先頭に補って残す
+current_val = st.session_state.get("ticker_selectbox")
+if current_val and current_val not in ticker_options:
+    ticker_options = [current_val] + ticker_options
+
+if st.session_state["jump_pending"]:
+    jump_ticker = st.session_state["jump_to_ticker"]
+    match = df[df["ticker"] == jump_ticker]
+    if not match.empty:
+        jump_label = f"{jump_ticker} {match.iloc[0]['name']}"
+        if jump_label not in ticker_options:
+            ticker_options = [jump_label] + ticker_options
+        st.session_state["ticker_selectbox"] = jump_label
+    st.session_state["jump_pending"] = False
+
+selected_label = st.selectbox("銘柄を選択", ticker_options, key="ticker_selectbox")
 
 if selected_label:
     selected_ticker = selected_label.split(" ")[0]
