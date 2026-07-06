@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# バックテスト専用データ(全銘柄×全営業日で数十万行になり100MB超えうるため、
+# GitHubにコミットせずbuild_signal_history.pyでいつでもローカル再生成する)
+data/backtest.db

@@ -21,6 +21,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python scripts/scoring/compute_scores.py
       - run: python scripts/decisions/decide_rule.py
+      - run: python scripts/decisions/decide_composite.py
       - run: python scripts/notify_discord.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

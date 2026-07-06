@@ -1,0 +1,24 @@
+# テクニカルv2エンジンのファミリー重み。
+#
+# 重要な注意: backtest/weight_optimizer.pyで1年分データのIC最大化を試みたが、
+# backtest/cross_validate.pyの時系列2分割検証で全ファミリーのICが前半→後半で
+# 符号反転することが判明した(市場全体の地合いが年途中で転換したため)。
+# regime_adaptive_validate.py(ADXによる日次のtrend/mean_reversion重み切替)でも
+# この不安定性は解消できなかった。
+#
+# したがって、1年分の後付け最適化を信用して固定するのではなく、
+# 意図的に均等に近い保守的な重みを採用する。今後はevaluate_decisions.py/
+# rule_performance.pyの実績(rule_version='v2.0')を見ながら手動で調整していく。
+family_weights:
+  trend_score: 0.25
+  mean_reversion_score: 0.20
+  volume_score: 0.15
+  market_regime_score: 0.25
+  sector_regime_score: 0.15
+
+# ボラティリティレジーム判定の閾値(ADX)
+regime:
+  adx_trend_threshold: 25.0
+  adx_range_threshold: 20.0
+  bb_squeeze_percentile: 0.2
+  min_sector_sample_size: 5

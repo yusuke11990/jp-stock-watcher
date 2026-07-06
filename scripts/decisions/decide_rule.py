@@ -119,7 +119,7 @@ def upsert_decision(conn, ticker: str, decision_date: str, decision: Decision, t
                 (ticker, decision_date, action, decision_source, rule_version,
                  total_score, grade, technical_signals, reason, price_at_decision, confidence)
             VALUES (?, ?, ?, 'rule', ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(ticker, decision_date, decision_source) DO UPDATE SET
+            ON CONFLICT(ticker, decision_date, decision_source, rule_version) DO UPDATE SET
                 action=excluded.action, rule_version=excluded.rule_version,
                 total_score=excluded.total_score, grade=excluded.grade,
                 technical_signals=excluded.technical_signals, reason=excluded.reason,

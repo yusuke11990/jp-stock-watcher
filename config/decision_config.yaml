@@ -1,0 +1,22 @@
+# ファンダメンタルズ(6軸スコア)とテクニカルv2の合成重み。
+#
+# テクニカルの技術的な不安定性(technical_config.yaml参照)を踏まえ、
+# 複数年のEDINET/yfinanceデータで検証済みのファンダメンタルズ側を重視する
+# 保守的な配分にしている。
+composite:
+  fundamental_weight: 0.65
+  technical_weight: 0.35
+
+action_thresholds:
+  buy: 0.35
+  sell: -0.35
+  # -0.35 < score < 0.35 は hold
+
+confidence:
+  # 合成スコアの絶対値をconfidence(0~1)にマッピングする際の分母
+  scale: 0.7
+
+risk_overlay:
+  atr_stop_multiplier: 2.0
+  atr_take_profit_multiplier: 3.5
+  max_holding_days: 21  # decision_outcomesの評価ホライズンと揃える

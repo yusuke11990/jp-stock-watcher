@@ -102,8 +102,14 @@ CREATE TABLE IF NOT EXISTS decisions (
     reason TEXT,
     price_at_decision REAL,
     confidence REAL,
+    stop_loss_price REAL,
+    take_profit_price REAL,
+    risk_reward_ratio REAL,
+    technical_composite_score REAL,
+    regime_market TEXT,
+    signal_scores_v2 TEXT,
     created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(ticker, decision_date, decision_source)
+    UNIQUE(ticker, decision_date, decision_source, rule_version)
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions(ticker, decision_date);
 
@@ -162,7 +168,41 @@ CREATE TABLE IF NOT EXISTS edinet_scanned_dates (
     doc_count INTEGER,
     scanned_at TEXT
 );
+
 """
+
+# signal_historyはバックテスト専用の派生データ(全銘柄×全営業日で数十万行になり、
+# 本番用のstock.db(GitHubにコミットする対象)に含めると100MB超でpush出来なくなる)。
+# 独立したdata/backtest.db(.gitignore対象、いつでもbuild_signal_history.pyで再生成可能)に分離する。
+BACKTEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS signal_history (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    trend_score REAL,
+    mean_reversion_score REAL,
+    volume_score REAL,
+    regime_volatility TEXT,
+    market_regime_score REAL,
+    sector_regime_score REAL,
+    composite_technical_score REAL,
+    forward_return_5d REAL,
+    forward_return_10d REAL,
+    forward_return_21d REAL,
+    computed_at TEXT,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_history_date ON signal_history(date);
+"""
+
+BACKTEST_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "backtest.db"
+
+
+def get_backtest_connection() -> sqlite3.Connection:
+    BACKTEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(BACKTEST_DB_PATH)
+    conn.executescript(BACKTEST_SCHEMA)
+    conn.commit()
+    return conn
 
 # fundamentals_weeklyへ追加するカラム(6軸スコアリング用)。既存DBには起動時にマイグレーションする。
 FUNDAMENTALS_EXTRA_COLUMNS = {
@@ -205,11 +245,56 @@ def _migrate_fundamentals_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE fundamentals_yearly ADD COLUMN buyback_amount REAL")
 
 
+# decisionsへ追加するカラム(v2合成エンジン用)。既存DBには起動時にマイグレーションする。
+DECISIONS_EXTRA_COLUMNS = {
+    "stop_loss_price": "REAL",
+    "take_profit_price": "REAL",
+    "risk_reward_ratio": "REAL",
+    "technical_composite_score": "REAL",
+    "regime_market": "TEXT",
+    "signal_scores_v2": "TEXT",
+}
+
+
+def _migrate_decisions_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}
+    for col, coltype in DECISIONS_EXTRA_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE decisions ADD COLUMN {col} {coltype}")
+
+
+def _migrate_decisions_unique_constraint(conn: sqlite3.Connection) -> None:
+    """UNIQUE(ticker, decision_date, decision_source)をrule_version込みに変更する。
+
+    v1(ルールベース)とv2(合成エンジン)の判断を同日・同銘柄で共存させるために必要。
+    SQLiteはUNIQUE制約の変更にテーブル再作成が要るため、既存データを保持したまま
+    新スキーマのテーブルへ移行する。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='decisions'"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return
+    if "decision_source, rule_version)" in row[0]:
+        return  # 既に新スキーマ
+
+    conn.executescript("""
+        ALTER TABLE decisions RENAME TO decisions_old;
+    """)
+    conn.executescript(SCHEMA)  # 新定義のdecisionsを再作成(他のCREATE TABLE IF NOT EXISTSは無害)
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(decisions_old)")]
+    col_list = ", ".join(cols)
+    conn.execute(f"INSERT INTO decisions ({col_list}) SELECT {col_list} FROM decisions_old")
+    conn.execute("DROP TABLE decisions_old")
+
+
 def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
     _migrate_fundamentals_columns(conn)
+    _migrate_decisions_unique_constraint(conn)
+    _migrate_decisions_columns(conn)
     conn.commit()
     return conn
 

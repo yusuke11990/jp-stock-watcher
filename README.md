@@ -10,20 +10,34 @@
 ```
 scripts/
   common/
-    db.py           # SQLite接続・スキーマ初期化(scores/decisions/decision_outcomes等)
+    db.py           # SQLite接続・スキーマ初期化(scores/decisions/decision_outcomes/signal_history等)
     yf_client.py     # yfinance呼び出しの共通リトライ・ブロック検知
-    technical.py      # テクニカルシグナル判定(GC/RSI/MACD/BB/出来高)
+    technical.py      # テクニカルシグナル判定v1(GC/RSI/MACD/BB/出来高、二値)
+    technical_v2.py    # テクニカル判断エンジンv2(trend/mean_reversion/volumeの連続値スコア)
+    regime.py           # 市場(TOPIX)・セクターのレジーム判定(v2用)
   fetch_tickers.py     # JPX上場銘柄一覧の取得(月次)
   fetch_price_daily.py # 価格の日次バッチ取得
   fetch_fundamentals.py # ファンダメンタルズのローリング取得(週次相当)
   fetch_edinet_history.py # EDINETから有価証券報告書を遡り、yfinanceの4〜5年を超える長期の業績推移を取得
   scoring/compute_scores.py   # 業種内相対評価による6軸スコアリング
-  decisions/decide_rule.py    # ルールベース売買判断
+  decisions/
+    decide_rule.py      # ルールベース売買判断(v1.0、グレード×二値シグナル)
+    decide_composite.py # 合成判断エンジン(v2.0、ファンダ×連続値テクニカルスコア、ATRリスクオーバーレイ)
+  backtest/              # v2のシグナル検証・重みチューニング用(本番運用とは別系統)
+    build_signal_history.py  # 全銘柄×全営業日のシグナルスコアをsignal_historyに構築
+    event_study.py            # ファミリー間相関・quintile分析
+    weight_optimizer.py        # IC最大化による重み最適化
+    cross_validate.py           # 時系列2分割・銘柄k-foldでの頑健性検証
+    regime_adaptive_validate.py # ADXレジーム適応型 vs 静的重みの比較検証
   evaluate_decisions.py       # 判断から1ヶ月後の自動評価
-  reports/rule_performance.py # 的中率サマリー
-  notify_discord.py           # Discord Webhook通知
-config/scoring_config.yaml    # スコアリングの重み・閾値(コード変更なしで調整可能)
+  reports/rule_performance.py # 的中率サマリー(rule_version別にv1/v2を比較)
+  notify_discord.py           # Discord Webhook通知(現在はv1のみ通知、v2は検証中)
+config/
+  scoring_config.yaml    # ファンダ6軸スコアリングの重み・閾値
+  technical_config.yaml   # v2テクニカルのファミリー重み・レジーム閾値
+  decision_config.yaml     # ファンダ/テクニカル合成重み・action閾値・リスクオーバーレイ設定
 data/stock.db                 # SQLite本体(リポジトリにコミットして永続化)
+data/backtest.db               # バックテスト専用(signal_history)。.gitignore対象、build_signal_history.pyで再生成
 .github/workflows/            # GitHub Actions(スケジュール実行)
 ```
 
@@ -82,3 +96,14 @@ EDINET_API_KEY=xxxx python scripts/fetch_edinet_history.py --tickers 7203.T 1301
 - 売買判断(`decide_rule.py`)は`decision_source='rule'`で記録。将来LLM(Claude API)による判断を追加する場合は`decision_source='llm'`として同じテーブルに並行記録できる設計
 - ルールの自動チューニングは行わない。`rule_performance.py`の出力を見て`config/scoring_config.yaml`や`decide_rule.py`の閾値を手動調整する運用を想定
 - `fetch_edinet_history.py`は1件の有価証券報告書に含まれる直近5年分の連結決算サマリーを、約5年おきの過去の書類まで遡って`fundamentals_yearly`に蓄積する(実測: 極洋で13年分、トヨタで8年分)。連結値は「コンテキストID」に`_NonConsolidatedMember`等の接尾辞が付かない行として判定。IFRS採用の大企業は企業固有の拡張タグ(`...KeyFinancialData`)で売上高を開示することがあり、正規表現フォールバックで対応している。会計基準が大きく変わった年代(米国基準→IFRS移行前など)の書類は自動では拾えないことがある
+
+## テクニカル判断エンジンv2について
+
+v1(`decide_rule.py`)のGC/RSI/MACD/BB/出来高という二値シグナルは、相関の高いシグナルを頭数だけ数える設計だったため、`decide_composite.py`でゼロから再設計した。trend(MA配列・傾き・ADX)/mean_reversion(RSIダイバージェンス・%B)/volume(方向付き出来高・OBVダイバージェンス)/market_regime(TOPIX)/sector_regimeの5ファミリーを連続値(-1〜+1)で算出し、ファンダ6軸スコアと加重合成、ATRベースのストップロス・利確ラインも付与する。
+
+`scripts/backtest/`で全銘柄1年分の実データを使ってこのv2エンジンを検証した結果、重要な発見があった:
+- `trend_score`と`mean_reversion_score`の相関がρ=-0.79と高く、設計上完全な独立にはできていない
+- `weight_optimizer.py`で1年分データにIC最大化で重みを最適化しても、`cross_validate.py`の時系列2分割検証で**全ファミリーのICが前半→後半で符号反転**した(市場全体の地合いが年途中で転換したため)
+- `regime_adaptive_validate.py`でADXによる日次のtrend/mean_reversion重み切り替えを試しても、この不安定性は解消できなかった
+
+このため、1年分データへの後付け最適化を信用して重みを固定するのではなく、`config/technical_config.yaml`/`config/decision_config.yaml`では意図的に保守的な重み(ファンダ0.65:テクニカル0.35、テクニカル内は均等に近い配分)を採用している。v2は`rule_version='v2.0'`として`decisions`テーブルにv1と並行記録され(Discord通知は現状v1のみ)、`rule_performance.py`でv1/v2の実績比較ができる。今後は後付けのバックテストではなく、実際の判断→1ヶ月後評価という前向きの実績蓄積で重みを調整していく方針。

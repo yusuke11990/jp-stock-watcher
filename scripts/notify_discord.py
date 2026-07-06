@@ -23,11 +23,14 @@ ACTION_LABEL = {"buy": "買い", "sell": "売り"}
 
 
 def load_today_actionable_decisions(conn, decision_date: str):
+    # v2(decide_composite.py)は実績評価中のためDiscord通知はv1のみに限定する。
+    # v1/v2比較はrule_performance.pyで確認する。
     query = """
     SELECT d.ticker, t.name, d.action, d.grade, d.total_score, d.reason, d.price_at_decision, d.confidence
     FROM decisions d
     JOIN tickers t ON t.ticker = d.ticker
-    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.action IN ('buy', 'sell')
+    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.rule_version = 'v1.0'
+      AND d.action IN ('buy', 'sell')
     ORDER BY d.confidence DESC
     """
     cols = ["ticker", "name", "action", "grade", "total_score", "reason", "price_at_decision", "confidence"]
