@@ -31,11 +31,22 @@ def load_latest_snapshot_date(conn) -> str | None:
 
 
 def load_data(conn, snapshot_date: str) -> pd.DataFrame:
+    """スコア計算日(snapshot_date、resultのラベル用)は指定日を使うが、
+    元データは「各銘柄が実際に取得できた最新のfundamentals_weekly行」を使う。
+    ローリング更新は日によって異なる銘柄群を取得するため、単一の日付で絞ると
+    その日だけ取得された数銘柄しかスコア化できなくなってしまうため。
+    """
     query = """
     SELECT f.*, t.sector
     FROM fundamentals_weekly f
+    JOIN (
+        SELECT ticker, MAX(snapshot_date) AS latest_date
+        FROM fundamentals_weekly
+        WHERE snapshot_date <= ?
+        GROUP BY ticker
+    ) latest ON f.ticker = latest.ticker AND f.snapshot_date = latest.latest_date
     JOIN tickers t ON f.ticker = t.ticker
-    WHERE f.snapshot_date = ? AND t.is_active = 1
+    WHERE t.is_active = 1
     """
     df = pd.read_sql_query(query, conn, params=(snapshot_date,))
     df["interest_bearing_debt_to_market_cap"] = df.apply(
