@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS fundamentals_yearly (
     financing_cf REAL,
     free_cf REAL,
     cash_and_equivalents REAL,
+    buyback_amount REAL,
     updated_at TEXT,
     PRIMARY KEY (ticker, fiscal_year_end)
 );
@@ -198,6 +199,10 @@ def _migrate_fundamentals_columns(conn: sqlite3.Connection) -> None:
     for col, coltype in FUNDAMENTALS_EXTRA_COLUMNS.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE fundamentals_weekly ADD COLUMN {col} {coltype}")
+
+    existing_yearly = {row[1] for row in conn.execute("PRAGMA table_info(fundamentals_yearly)")}
+    if "buyback_amount" not in existing_yearly:
+        conn.execute("ALTER TABLE fundamentals_yearly ADD COLUMN buyback_amount REAL")
 
 
 def get_connection() -> sqlite3.Connection:

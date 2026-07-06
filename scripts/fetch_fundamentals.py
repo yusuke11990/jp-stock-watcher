@@ -245,6 +245,7 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
     financing_cf_row = _get_row(cf, CASHFLOW_LABELS["financing_cf"])
     free_cf_row = _get_row(cf, CASHFLOW_LABELS["free_cf"])
     dividends_paid_row = _get_row(cf, CASHFLOW_LABELS["dividends_paid"])
+    buyback_row = _get_row(cf, CASHFLOW_LABELS["buyback"])
 
     shares = data["info"].get("sharesOutstanding")
     now_iso = datetime.now(JST).isoformat()
@@ -273,8 +274,9 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
                     (ticker, fiscal_year_end, revenue, operating_income, ordinary_income, net_income,
                      operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
                      total_assets, total_liabilities, equity, equity_ratio,
-                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents,
+                     buyback_amount, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
                     revenue=excluded.revenue, operating_income=excluded.operating_income,
                     ordinary_income=excluded.ordinary_income, net_income=excluded.net_income,
@@ -285,7 +287,7 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
                     equity_ratio=excluded.equity_ratio, operating_cf=excluded.operating_cf,
                     investing_cf=excluded.investing_cf, financing_cf=excluded.financing_cf,
                     free_cf=excluded.free_cf, cash_and_equivalents=excluded.cash_and_equivalents,
-                    updated_at=excluded.updated_at
+                    buyback_amount=excluded.buyback_amount, updated_at=excluded.updated_at
                 """,
                 (
                     ticker, fiscal_year_end, revenue, op_income, val(ordinary_income_row), net_income,
@@ -295,7 +297,8 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
                     total_assets, val(total_liabilities_row), equity,
                     (equity / total_assets * 100) if equity and total_assets else None,
                     val(operating_cf_row), val(investing_cf_row), val(financing_cf_row),
-                    val(free_cf_row), val(cash_row), now_iso,
+                    val(free_cf_row), val(cash_row),
+                    abs(val(buyback_row)) if val(buyback_row) else None, now_iso,
                 ),
             )
             rows_written += 1
