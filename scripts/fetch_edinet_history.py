@@ -158,6 +158,19 @@ def _is_consolidated_context(context_id: str) -> bool:
     return "NonConsolidatedMember" not in context_id and "Member" not in context_id
 
 
+# 1株配当・配当性向は「提出会社(=親会社)の株式1株あたり」の指標であり、そもそも連結概念が
+# 存在しないため、EDINETは常に非連結(NonConsolidatedMember)コンテキストでのみ開示する。
+# 他の指標と同じ_is_consolidated_contextでフィルタすると常に除外されてしまうため、
+# この2指標だけは非連結コンテキストも許可する。
+NON_CONSOLIDATED_ONLY_METRICS = {"dividend_per_share", "payout_ratio_pct"}
+
+
+def _matches_context(metric: str, context_id: str) -> bool:
+    if metric in NON_CONSOLIDATED_ONLY_METRICS:
+        return "NonConsolidatedMember" in context_id or _is_consolidated_context(context_id)
+    return _is_consolidated_context(context_id)
+
+
 # 大企業はIFRS決算指標を"SummaryOfBusinessResults"ではなく企業固有の拡張タグ
 # "...KeyFinancialData"で開示することがある(例: トヨタのOperatingRevenuesIFRSKeyFinancialData)。
 # 名前空間の接頭辞(会社ごとのEDINETコードを含む)が異なるため、要素IDのローカル名(:以降)を
@@ -204,7 +217,7 @@ def extract_yearly_metrics(df: pd.DataFrame) -> dict:
             filled_years = {y for y, m in result.items() if metric in m}
             if filled_years >= all_years:
                 break
-            sub = df[(df["要素ID"] == tag) & df["コンテキストID"].apply(_is_consolidated_context)]
+            sub = df[(df["要素ID"] == tag) & df["コンテキストID"].apply(lambda c: _matches_context(metric, c))]
             if sub.empty:
                 continue
             _apply_rows(result, metric, sub)
@@ -229,15 +242,19 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
             ordinary_income = metrics.get("ordinary_income")
             equity = metrics.get("equity")
             total_assets = metrics.get("total_assets")
+            # EDINETのPayoutRatioSummaryOfBusinessResultsは0.515のような小数(既に比率)で
+            # 開示されており、パーセント表記(51.5)ではないため/100してはいけない
             payout_ratio = metrics.get("payout_ratio_pct")
+            # EDINETの5年サマリー表には負債額そのものは無いが、総資産・純資産は取れるため差分で算出する
+            total_liabilities = (total_assets - equity) if total_assets is not None and equity is not None else None
             conn.execute(
                 """
                 INSERT INTO fundamentals_yearly
                     (ticker, fiscal_year_end, revenue, ordinary_income, net_income,
                      operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
-                     total_assets, equity, equity_ratio,
+                     total_assets, total_liabilities, equity, equity_ratio,
                      operating_cf, investing_cf, financing_cf, cash_and_equivalents, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
                     revenue=COALESCE(excluded.revenue, fundamentals_yearly.revenue),
                     ordinary_income=COALESCE(excluded.ordinary_income, fundamentals_yearly.ordinary_income),
@@ -248,6 +265,7 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     dividend_per_share=COALESCE(excluded.dividend_per_share, fundamentals_yearly.dividend_per_share),
                     payout_ratio=COALESCE(excluded.payout_ratio, fundamentals_yearly.payout_ratio),
                     total_assets=COALESCE(excluded.total_assets, fundamentals_yearly.total_assets),
+                    total_liabilities=COALESCE(excluded.total_liabilities, fundamentals_yearly.total_liabilities),
                     equity=COALESCE(excluded.equity, fundamentals_yearly.equity),
                     equity_ratio=COALESCE(excluded.equity_ratio, fundamentals_yearly.equity_ratio),
                     operating_cf=COALESCE(excluded.operating_cf, fundamentals_yearly.operating_cf),
@@ -260,9 +278,8 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     ticker, fiscal_year_end.isoformat(), revenue, ordinary_income, net_income,
                     (ordinary_income / revenue) if ordinary_income and revenue else None,
                     (net_income / revenue) if net_income and revenue else None,
-                    metrics.get("eps"), metrics.get("dividend_per_share"),
-                    (payout_ratio / 100) if payout_ratio else None,
-                    total_assets, equity,
+                    metrics.get("eps"), metrics.get("dividend_per_share"), payout_ratio,
+                    total_assets, total_liabilities, equity,
                     (equity / total_assets * 100) if equity and total_assets else None,
                     metrics.get("operating_cf"), metrics.get("investing_cf"), metrics.get("financing_cf"),
                     metrics.get("cash_and_equivalents"), now_iso,
