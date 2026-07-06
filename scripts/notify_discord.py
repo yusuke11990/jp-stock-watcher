@@ -24,23 +24,26 @@ ACTION_LABEL = {"buy": "買い", "sell": "売り"}
 
 def load_today_actionable_decisions(conn, decision_date: str):
     query = """
-    SELECT ticker, action, grade, total_score, reason, price_at_decision, confidence
-    FROM decisions
-    WHERE decision_date = ? AND decision_source = 'rule' AND action IN ('buy', 'sell')
-    ORDER BY confidence DESC
+    SELECT d.ticker, t.name, d.action, d.grade, d.total_score, d.reason, d.price_at_decision, d.confidence
+    FROM decisions d
+    JOIN tickers t ON t.ticker = d.ticker
+    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.action IN ('buy', 'sell')
+    ORDER BY d.confidence DESC
     """
-    cols = ["ticker", "action", "grade", "total_score", "reason", "price_at_decision", "confidence"]
+    cols = ["ticker", "name", "action", "grade", "total_score", "reason", "price_at_decision", "confidence"]
     return [dict(zip(cols, row)) for row in conn.execute(query, (decision_date,))]
 
 
 def build_embed(decision: dict) -> dict:
+    name = decision.get("name") or decision["ticker"]
     return {
-        "title": f"{ACTION_LABEL[decision['action']]}: {decision['ticker']} (grade {decision['grade']})",
+        "title": f"{ACTION_LABEL[decision['action']]}：{name}({decision['ticker']})",
         "description": decision["reason"],
         "color": ACTION_COLOR[decision["action"]],
         "fields": [
+            {"name": "グレード", "value": decision["grade"] or "-", "inline": True},
             {"name": "総合スコア", "value": f"{decision['total_score']:.1f}" if decision["total_score"] is not None else "-", "inline": True},
-            {"name": "株価", "value": f"¥{decision['price_at_decision']:,.0f}" if decision["price_at_decision"] else "-", "inline": True},
+            {"name": "株価", "value": f"{decision['price_at_decision']:,.0f}" if decision["price_at_decision"] else "-", "inline": True},
             {"name": "確信度", "value": f"{decision['confidence']:.0%}", "inline": True},
         ],
     }
