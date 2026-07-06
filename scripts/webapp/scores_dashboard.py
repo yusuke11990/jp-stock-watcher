@@ -55,10 +55,11 @@ st.markdown(
     div[data-testid="stMetricValue"] {font-size: 1.1rem;}
     div[data-testid="stMetricLabel"] {font-size: 0.75rem;}
     .at-a-glance-card {
-        border-radius: 6px; padding: 6px 10px; text-align: center; height: 100%;
+        border-radius: 6px; padding: 6px 6px; text-align: center;
+        height: 62px; display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
-    .at-a-glance-card .label {font-size: 0.72rem; opacity: 0.75;}
-    .at-a-glance-card .value {font-size: 1.15rem; font-weight: 700;}
+    .at-a-glance-card .label {font-size: 0.68rem; opacity: 0.75; line-height: 1.15;}
+    .at-a-glance-card .value {font-size: 1.1rem; font-weight: 700; line-height: 1.2;}
     .at-a-glance-card .sub {font-size: 0.68rem; opacity: 0.7;}
     </style>
     """,
@@ -118,7 +119,7 @@ def load_data() -> tuple[pd.DataFrame, str | None]:
         s.score_safety, s.score_growth, s.score_profitability,
         s.score_efficiency, s.score_valuation, s.score_shareholder_return,
         s.total_score, s.grade, s.sector_rank, s.sector_size,
-        f.per, f.pbr, f.roe, f.dividend_yield, f.market_cap, f.equity_ratio, f.revenue_growth_3y_cagr,
+        f.per, f.pbr, f.roe, f.dividend_yield, f.market_cap, f.equity_ratio, f.revenue_growth_3y_cagr, f.payout_ratio,
         (SELECT close FROM price_daily p WHERE p.ticker = s.ticker ORDER BY p.date DESC LIMIT 1) AS price
     FROM scores s
     JOIN tickers t ON s.ticker = t.ticker
@@ -374,6 +375,7 @@ if filters_active:
                                            "ticker": "コード", "name": "銘柄名", "sector": "業種", "market": "市場",
                                            "per": "PER", "pbr": "PBR", "roe": "ROE", "dividend_yield": "配当利回り",
                                            "price": "株価", "sector_rank": "業種内順位", "sector_size": "業種銘柄数"})
+    display_df["コード"] = display_df["コード"].str.replace(".T", "", regex=False)
     display_cols = ["コード", "銘柄名", "業種", "市場", "株価", "PER", "PBR", "ROE",
                     "安全性", "成長性", "収益性", "効率性", "割安性", "還元性",
                     "総合スコア", "グレード", "業種内順位", "業種銘柄数"]
@@ -387,7 +389,7 @@ if filters_active:
 
 st.subheader("個別銘柄の詳細")
 
-ticker_options = (filtered["ticker"] + " " + filtered["name"].fillna("")).tolist()
+ticker_options = (filtered["ticker"].str.replace(".T", "", regex=False) + " " + filtered["name"].fillna("")).tolist()
 
 # 買い/売り一覧のクリック、またはサイドバー絞り込みで選択中の銘柄が候補から消えても
 # 選択状態を保てるよう、現在値がoptionsに無ければ先頭に補って残す
@@ -399,7 +401,7 @@ if st.session_state["jump_pending"]:
     jump_ticker = st.session_state["jump_to_ticker"]
     match = df[df["ticker"] == jump_ticker]
     if not match.empty:
-        jump_label = f"{jump_ticker} {match.iloc[0]['name']}"
+        jump_label = f"{jump_ticker.replace('.T', '')} {match.iloc[0]['name']}"
         if jump_label not in ticker_options:
             ticker_options = [jump_label] + ticker_options
         st.session_state["ticker_selectbox"] = jump_label
@@ -408,33 +410,37 @@ if st.session_state["jump_pending"]:
 selected_label = st.selectbox("銘柄を選択", ticker_options, key="ticker_selectbox")
 
 if selected_label:
-    selected_ticker = selected_label.split(" ")[0]
+    selected_ticker = selected_label.split(" ")[0] + ".T"
     row = df[df["ticker"] == selected_ticker].iloc[0]
 
     yearly = load_yearly(selected_ticker)
-    fiscal_month = pd.to_datetime(yearly["fiscal_year_end"]).max().month if not yearly.empty else None
     mix_ratio = (row["per"] * row["pbr"]) if pd.notna(row["per"]) and pd.notna(row["pbr"]) else None
     div_stats = dividend_streak_stats(yearly["dividend_per_share"]) if not yearly.empty else dividend_streak_stats(pd.Series(dtype=float))
 
+    def _render_glance_row(items: list[tuple[str, str, str]]) -> None:
+        cols = st.columns(len(items))
+        for col, (label, value, color) in zip(cols, items):
+            col.markdown(
+                f"""<div class="at-a-glance-card" style="background:{color};">
+                    <div class="label">{label}</div><div class="value">{value}</div>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+
     # --- ひと目カード(バフェット・コード風の要約カード) ---
     glance_items = [
+        ("株価", f"{row['price']:,.0f}" if pd.notna(row["price"]) else "-", "#F1F1F1"),
         ("時価総額(億円)", f"{row['market_cap'] / 1e8:,.0f}" if pd.notna(row["market_cap"]) else "-", "#FFF6E0"),
         ("PER(倍)", f"{row['per']:.1f}" if pd.notna(row["per"]) else "-", "#E8F5E9"),
         ("PBR(倍)", f"{row['pbr']:.2f}" if pd.notna(row["pbr"]) else "-", "#E8F5E9"),
         ("ROE(%)", f"{row['roe'] * 100:.1f}" if pd.notna(row["roe"]) else "-", "#FCE9E9"),
+        ("MIX係数(PER×PBR)", f"{mix_ratio:.1f}" if mix_ratio is not None else "-", "#EDE7F6"),
         ("自己資本比率(%)", f"{row['equity_ratio']:.1f}" if pd.notna(row["equity_ratio"]) else "-", "#E6F0FA"),
         ("配当利回り(%)", f"{row['dividend_yield']:.2f}" if pd.notna(row["dividend_yield"]) else "-", "#F1F1F1"),
-        ("MIX係数(PER×PBR)", f"{mix_ratio:.1f}" if mix_ratio is not None else "-", "#EDE7F6"),
-        ("決算月", f"{fiscal_month}月" if fiscal_month else "-", "#F1F1F1"),
+        ("配当性向(%)", f"{row['payout_ratio'] * 100:.1f}" if pd.notna(row["payout_ratio"]) else "-", "#F1F1F1"),
+        ("総合評価", f"{row['total_score']:.1f}({row['grade']})" if pd.notna(row["total_score"]) else "-", "#FFF6E0"),
     ]
-    cols = st.columns(len(glance_items))
-    for col, (label, value, color) in zip(cols, glance_items):
-        col.markdown(
-            f"""<div class="at-a-glance-card" style="background:{color};">
-                <div class="label">{label}</div><div class="value">{value}</div>
-                </div>""",
-            unsafe_allow_html=True,
-        )
+    _render_glance_row(glance_items)
 
     # --- 配当性向まわりのカード(累進配当・増配/減配回数・増配率など) ---
     div_growth_1y = cagr_over_n_years(yearly["dividend_per_share"], 1) if not yearly.empty else None
@@ -447,23 +453,16 @@ if selected_label:
         ("連続増配", f"{div_stats['consecutive_increase']}年", "#E0F2F1"),
         ("増配回数", f"{div_stats['increase']}回", "#E0F2F1"),
         ("減配回数", f"{div_stats['decrease']}回", "#FCE9E9"),
-        ("非減配年数", f"{div_stats['no_decrease_years']}年", "#E0F2F1"),
+        ("非減配年", f"{div_stats['no_decrease_years']}年", "#E0F2F1"),
         ("増配率(1年)", f"{div_growth_1y * 100:.1f}%" if div_growth_1y is not None else "-", "#E3F2FD"),
         ("増配率(3年)", f"{div_growth_3y * 100:.1f}%" if div_growth_3y is not None else "-", "#E3F2FD"),
         ("増配率(5年)", f"{div_growth_5y * 100:.1f}%" if div_growth_5y is not None else "-", "#E3F2FD"),
         ("増配率(10年)", f"{div_growth_10y * 100:.1f}%" if div_growth_10y is not None else "-", "#E3F2FD"),
     ]
-    cols2 = st.columns(len(div_cards))
-    for col, (label, value, color) in zip(cols2, div_cards):
-        col.markdown(
-            f"""<div class="at-a-glance-card" style="background:{color};">
-                <div class="label">{label}</div><div class="value">{value}</div>
-                </div>""",
-            unsafe_allow_html=True,
-        )
+    _render_glance_row(div_cards)
 
     st.caption(
-        f"{row['ticker']} {row['name']}　業種: {row['sector']}　"
+        f"{row['ticker'].replace('.T', '')} {row['name']}　業種: {row['sector']}　"
         f"総合スコア {row['total_score']:.1f}({row['grade']})　業種内 {int(row['sector_rank'])}/{int(row['sector_size'])}位"
     )
 
