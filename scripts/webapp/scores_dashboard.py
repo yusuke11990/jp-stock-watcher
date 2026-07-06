@@ -20,7 +20,6 @@ from scoring.compute_scores import load_config, score_to_grade  # noqa: E402
 _SCORING_CONFIG = load_config()
 _GRADE_THRESHOLDS = _SCORING_CONFIG["grade_thresholds"]
 
-TOPIX_TICKER = "1306.T"
 CATEGORY_COLS = {
     "score_safety": "安全性",
     "score_growth": "成長性",
@@ -31,6 +30,13 @@ CATEGORY_COLS = {
 }
 PERIOD_DAYS = {"1ヶ月": 30, "3ヶ月": 90, "6ヶ月": 180, "1年": 365, "3年": 365 * 3}
 COMPACT_HEIGHT = 230
+YEARLY_HEIGHT = 360
+# fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
+YEN_TO_MILLION_COLS = {
+    "revenue", "operating_income", "ordinary_income", "net_income",
+    "total_assets", "total_liabilities", "equity",
+    "operating_cf", "investing_cf", "financing_cf", "free_cf", "cash_and_equivalents", "buyback_amount",
+}
 
 st.set_page_config(page_title="日本株スコア一覧", layout="wide")
 st.markdown(
@@ -68,14 +74,28 @@ def _compact(fig: go.Figure, height: int = COMPACT_HEIGHT) -> go.Figure:
 
 
 def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
-    """バフェット・コード風: 年度ラベルを斜めに、グリッド線を薄く、マーカー付きの折れ線"""
-    fig.update_xaxes(tickangle=-40, showgrid=False)
+    """しけなぎ/バフェット・コード風: 全年度を等間隔表示、太めのバー、大きめの文字"""
+    fig.update_xaxes(tickangle=-40, showgrid=False, type="category", tickmode="linear", dtick=1)
     fig.update_yaxes(showgrid=True, gridcolor="#eee", zeroline=False)
+    fig.update_layout(
+        height=YEARLY_HEIGHT,
+        margin=dict(l=45, r=45, t=32, b=40),
+        font=dict(size=13, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif", color="#333"),
+        legend=dict(font=dict(size=11), orientation="h", yanchor="bottom", y=1.0),
+        plot_bgcolor="white",
+        hovermode="x unified",
+        bargap=0.15,
+        bargroupgap=0.08,
+    )
     for trace in fig.data:
         if trace.type == "scatter" and trace.mode is None:
             trace.mode = "lines+markers"
-            trace.marker = dict(size=5)
+            trace.marker = dict(size=6)
     return fig
+
+
+def _to_million(series: pd.Series) -> pd.Series:
+    return series / 1e6
 
 
 @st.cache_data(ttl=300)
@@ -386,12 +406,7 @@ if selected_label:
         f"総合スコア {row['total_score']:.1f}({row['grade']})　業種内 {int(row['sector_rank'])}/{int(row['sector_size'])}位"
     )
 
-    # --- レーダーチャート(本銘柄/業種中央) + 株価/相対株価 ---
-    period_label = st.radio("株価チャートの期間", list(PERIOD_DAYS.keys()), index=3, horizontal=True)
-    days = PERIOD_DAYS[period_label]
-
-    col_radar1, col_radar2, col_price, col_rel = st.columns(4)
-
+    # --- レーダーチャート用データ(fundamentals_yearlyの有無に関わらず表示できるよう先に用意) ---
     labels = list(CATEGORY_COLS.values())
     values = [row[k] if pd.notna(row[k]) else 0 for k in CATEGORY_COLS.keys()]
     axis_grades = [score_to_grade(row[k], _GRADE_THRESHOLDS) or "-" for k in CATEGORY_COLS.keys()]
@@ -399,7 +414,91 @@ if selected_label:
     sector_medians = [sector_peers[k].median() for k in CATEGORY_COLS.keys()]
     sector_median_grades = [score_to_grade(v, _GRADE_THRESHOLDS) or "-" for v in sector_medians]
 
-    with col_radar1:
+    # --- 1行目: 株価 + AI判断日 ---
+    period_label = st.radio("株価チャートの期間", list(PERIOD_DAYS.keys()), index=3, horizontal=True)
+    days = PERIOD_DAYS[period_label]
+    price_hist = load_price_history(selected_ticker, days)
+    decisions = load_decisions(selected_ticker, days)
+
+    st.caption("株価 + AI判断日")
+    if price_hist.empty:
+        st.info("価格データがありません")
+    else:
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(x=price_hist["date"], y=price_hist["close"], name="株価", line=dict(width=2)))
+        for action, color, symbol in [("buy", "green", "triangle-up"), ("sell", "red", "triangle-down")]:
+            sub = decisions[decisions["action"] == action]
+            if not sub.empty:
+                fig_price.add_trace(go.Scatter(
+                    x=sub["decision_date"], y=sub["price_at_decision"], mode="markers", name=action,
+                    marker=dict(symbol=symbol, size=12, color=color),
+                ))
+        st.plotly_chart(_compact(fig_price, height=340), use_container_width=True)
+
+    if not decisions.empty:
+        with st.expander(f"この期間のAI判断ログ({len(decisions)}件)"):
+            st.dataframe(decisions.rename(columns={
+                "decision_date": "判断日", "action": "判断", "price_at_decision": "株価", "reason": "理由",
+            }), use_container_width=True, hide_index=True)
+
+    yearly_available = not yearly.empty
+    if not yearly_available:
+        st.info("この銘柄の複数年推移データはまだありません(次回のfetch_fundamentals.py/fetch_edinet_history.py実行で蓄積されます)。")
+    else:
+        revenue_cagr = cagr(yearly["revenue"])
+        cagr_text = f"売上高{len(yearly) - 1}年CAGR: {revenue_cagr * 100:.1f}%" if revenue_cagr is not None else ""
+        x = yearly["fy_label"]
+        TXT = dict(textposition="outside", textfont=dict(size=10))
+        TXT_LINE = dict(textposition="top center", textfont=dict(size=10))
+
+        # --- 2行目: 業績推移, 配当推移 ---
+        row1a, row1b = st.columns(2)
+        with row1a:
+            st.caption(f"業績推移(百万円)　{cagr_text}")
+            revenue_m = _to_million(yearly["revenue"])
+            fig_perf = go.Figure()
+            fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color="#BBBBBB",
+                              text=_labels(revenue_m), **TXT)
+            fig_perf.add_trace(go.Scatter(x=x, y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2",
+                                           line=dict(color="#D62728", width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **TXT_LINE))
+            fig_perf.add_trace(go.Scatter(x=x, y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2",
+                                           line=dict(color="#FF7F0E", width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **TXT_LINE))
+            fig_perf.add_trace(go.Scatter(x=x, y=yearly["roe"] * 100, name="ROE(%)", yaxis="y2",
+                                           line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **TXT_LINE))
+            fig_perf.update_layout(yaxis=dict(title="売上高(百万円)"), yaxis2=dict(title="利益率(%)", overlaying="y", side="right"))
+            st.plotly_chart(_yearly_chart_layout(fig_perf), use_container_width=True)
+
+        with row1b:
+            st.caption("配当推移(1株配当・EPS)")
+            fig_div = go.Figure()
+            fig_div.add_bar(x=x, y=yearly["dividend_per_share"], name="1株配当", marker_color="#BBBBBB",
+                             text=_labels(yearly["dividend_per_share"], "{:.1f}"), **TXT)
+            fig_div.add_trace(go.Scatter(x=x, y=yearly["eps"], name="EPS", yaxis="y2",
+                                          line=dict(color="#D62728", width=2.5), text=_labels(yearly["eps"], "{:.1f}"), **TXT_LINE))
+            fig_div.update_layout(yaxis=dict(title="1株配当(円)"), yaxis2=dict(title="EPS(円)", overlaying="y", side="right"))
+            st.plotly_chart(_yearly_chart_layout(fig_div), use_container_width=True)
+
+    # --- 3行目: 財務推移, スコア, 業種中央スコア ---
+    row2a, row2b, row2c = st.columns(3)
+    with row2a:
+        if not yearly_available:
+            st.caption("財務推移")
+            st.info("複数年推移データがありません")
+        else:
+            st.caption("財務推移(百万円・自己資本比率)")
+            equity_m = _to_million(yearly["equity"])
+            liabilities_m = _to_million(yearly["total_liabilities"])
+            fig_bs = go.Figure()
+            fig_bs.add_bar(x=x, y=equity_m, name="純資産", marker_color="#4C72B0",
+                            text=_labels(equity_m), **TXT)
+            fig_bs.add_bar(x=x, y=liabilities_m, name="負債", marker_color="#DD8452",
+                            text=_labels(liabilities_m), **TXT)
+            fig_bs.add_trace(go.Scatter(x=x, y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2",
+                                         line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **TXT_LINE))
+            fig_bs.update_layout(barmode="group", yaxis=dict(title="金額(百万円)"), yaxis2=dict(title="自己資本比率(%)", overlaying="y", side="right"))
+            st.plotly_chart(_yearly_chart_layout(fig_bs), use_container_width=True)
+
+    with row2b:
         fig = go.Figure()
         fig.add_trace(go.Scatterpolar(
             r=values + values[:1], theta=labels + labels[:1], fill="toself", name="本銘柄",
@@ -408,9 +507,9 @@ if selected_label:
         ))
         fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False)
         st.caption(f"スコア(総合評価 {row['grade']})")
-        st.plotly_chart(_compact(fig), use_container_width=True)
+        st.plotly_chart(_compact(fig, height=YEARLY_HEIGHT), use_container_width=True)
 
-    with col_radar2:
+    with row2c:
         fig_sector = go.Figure()
         fig_sector.add_trace(go.Scatterpolar(
             r=sector_medians + sector_medians[:1], theta=labels + labels[:1], fill="toself",
@@ -420,112 +519,30 @@ if selected_label:
         ))
         fig_sector.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False)
         st.caption(f"業種中央スコア({row['sector']})")
-        st.plotly_chart(_compact(fig_sector), use_container_width=True)
+        st.plotly_chart(_compact(fig_sector, height=YEARLY_HEIGHT), use_container_width=True)
 
-    price_hist = load_price_history(selected_ticker, days)
-    decisions = load_decisions(selected_ticker, days)
-
-    with col_price:
-        st.caption("株価 + AI判断日")
-        if price_hist.empty:
-            st.info("価格データがありません")
-        else:
-            fig_price = go.Figure()
-            fig_price.add_trace(go.Scatter(x=price_hist["date"], y=price_hist["close"], name="株価", line=dict(width=1.5)))
-            for action, color, symbol in [("buy", "green", "triangle-up"), ("sell", "red", "triangle-down")]:
-                sub = decisions[decisions["action"] == action]
-                if not sub.empty:
-                    fig_price.add_trace(go.Scatter(
-                        x=sub["decision_date"], y=sub["price_at_decision"], mode="markers", name=action,
-                        marker=dict(symbol=symbol, size=10, color=color),
-                    ))
-            st.plotly_chart(_compact(fig_price), use_container_width=True)
-
-    with col_rel:
-        st.caption("対TOPIX相対株価")
-        topix_hist = load_price_history(TOPIX_TICKER, days)
-        if price_hist.empty or topix_hist.empty:
-            st.info("比較用データがありません")
-        else:
-            merged = pd.merge(price_hist, topix_hist, on="date", suffixes=("_stock", "_topix")).dropna()
-            if merged.empty:
-                st.info("比較用データがありません")
-            else:
-                rel = merged["close_stock"] / merged["close_stock"].iloc[0] * 100 - merged["close_topix"] / merged["close_topix"].iloc[0] * 100
-                fig_rel = go.Figure()
-                fig_rel.add_trace(go.Scatter(x=merged["date"], y=rel, name="対TOPIX超過(%pt)", line=dict(color="purple", width=1.5)))
-                fig_rel.add_hline(y=0, line=dict(color="gray", width=1, dash="dot"))
-                st.plotly_chart(_compact(fig_rel), use_container_width=True)
-
-    if not decisions.empty:
-        with st.expander(f"この期間のAI判断ログ({len(decisions)}件)"):
-            st.dataframe(decisions.rename(columns={
-                "decision_date": "判断日", "action": "判断", "price_at_decision": "株価", "reason": "理由",
-            }), use_container_width=True, hide_index=True)
-
-    # --- 業績・配当・財務・CF推移 ---
-    if yearly.empty:
-        st.info("この銘柄の複数年推移データはまだありません(次回のfetch_fundamentals.py/fetch_edinet_history.py実行で蓄積されます)。")
-    else:
-        revenue_cagr = cagr(yearly["revenue"])
-        cagr_text = f"売上高{len(yearly) - 1}年CAGR: {revenue_cagr * 100:.1f}%" if revenue_cagr is not None else ""
-
-        x = yearly["fy_label"]
-
-        TXT = dict(textposition="outside", textfont=dict(size=8))
-        TXT_LINE = dict(textposition="top center", textfont=dict(size=8))
-
-        row1a, row1b = st.columns(2)
-        with row1a:
-            st.caption(f"業績推移　{cagr_text}")
-            fig_perf = go.Figure()
-            fig_perf.add_bar(x=x, y=yearly["revenue"], name="売上高", marker_color="#BBBBBB",
-                              text=_labels(yearly["revenue"]), **TXT)
-            fig_perf.add_trace(go.Scatter(x=x, y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2",
-                                           line=dict(color="#D62728"), text=_labels(yearly["operating_margin"] * 100, "{:.1f}%"), **TXT_LINE))
-            fig_perf.add_trace(go.Scatter(x=x, y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2",
-                                           line=dict(color="#FF7F0E"), text=_labels(yearly["net_margin"] * 100, "{:.1f}%"), **TXT_LINE))
-            fig_perf.add_trace(go.Scatter(x=x, y=yearly["roe"] * 100, name="ROE(%)", yaxis="y2",
-                                           line=dict(color="#2CA02C"), text=_labels(yearly["roe"] * 100, "{:.1f}%"), **TXT_LINE))
-            fig_perf.update_layout(yaxis=dict(title="売上高"), yaxis2=dict(title="利益率(%)", overlaying="y", side="right"))
-            st.plotly_chart(_yearly_chart_layout(_compact(fig_perf)), use_container_width=True)
-
-        with row1b:
-            st.caption("配当推移(1株配当・EPS)")
-            fig_div = go.Figure()
-            fig_div.add_bar(x=x, y=yearly["dividend_per_share"], name="1株配当", marker_color="#BBBBBB",
-                             text=_labels(yearly["dividend_per_share"], "{:.1f}"), **TXT)
-            fig_div.add_trace(go.Scatter(x=x, y=yearly["eps"], name="EPS", yaxis="y2",
-                                          line=dict(color="#D62728"), text=_labels(yearly["eps"], "{:.1f}"), **TXT_LINE))
-            fig_div.update_layout(yaxis=dict(title="1株配当"), yaxis2=dict(title="EPS", overlaying="y", side="right"))
-            st.plotly_chart(_yearly_chart_layout(_compact(fig_div)), use_container_width=True)
-
-        row2a, row2b = st.columns(2)
-        with row2a:
-            st.caption("財務推移(純資産・負債・自己資本比率)")
-            fig_bs = go.Figure()
-            fig_bs.add_bar(x=x, y=yearly["equity"], name="純資産", marker_color="#4C72B0",
-                            text=_labels(yearly["equity"]), **TXT)
-            fig_bs.add_bar(x=x, y=yearly["total_liabilities"], name="負債", marker_color="#DD8452",
-                            text=_labels(yearly["total_liabilities"]), **TXT)
-            fig_bs.add_trace(go.Scatter(x=x, y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2",
-                                         line=dict(color="#2CA02C"), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **TXT_LINE))
-            fig_bs.update_layout(barmode="group", yaxis=dict(title="金額"), yaxis2=dict(title="自己資本比率(%)", overlaying="y", side="right"))
-            st.plotly_chart(_yearly_chart_layout(_compact(fig_bs)), use_container_width=True)
-
-        with row2b:
-            st.caption("キャッシュフロー推移")
+    # --- 4行目: キャッシュフロー推移, 自己株式の取得 ---
+    if yearly_available:
+        row3a, row3b = st.columns(2)
+        with row3a:
+            st.caption("キャッシュフロー推移(百万円)")
             fig_cf = go.Figure()
-            fig_cf.add_bar(x=x, y=yearly["operating_cf"], name="営業CF", marker_color="#4C72B0")
-            fig_cf.add_bar(x=x, y=yearly["investing_cf"], name="投資CF", marker_color="#DD8452")
-            fig_cf.add_bar(x=x, y=yearly["financing_cf"], name="財務CF", marker_color="#BBBBBB")
-            fig_cf.add_trace(go.Scatter(x=x, y=yearly["free_cf"], name="フリーCF", line=dict(color="#2CA02C")))
-            fig_cf.update_layout(barmode="relative")
-            st.plotly_chart(_yearly_chart_layout(_compact(fig_cf)), use_container_width=True)
+            fig_cf.add_bar(x=x, y=_to_million(yearly["operating_cf"]), name="営業CF", marker_color="#4C72B0")
+            fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color="#DD8452")
+            fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color="#BBBBBB")
+            fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF", line=dict(color="#2CA02C", width=2.5)))
+            fig_cf.update_layout(barmode="relative", yaxis=dict(title="金額(百万円)"))
+            st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
 
-        if "buyback_amount" in yearly.columns and yearly["buyback_amount"].notna().any():
-            st.caption("自己株式の取得")
-            fig_buyback = go.Figure()
-            fig_buyback.add_bar(x=x, y=yearly["buyback_amount"], name="自己株式取得額", marker_color="#4C72B0",
-                                 text=_labels(yearly["buyback_amount"]), **TXT)
-            st.plotly_chart(_yearly_chart_layout(_compact(fig_buyback)), use_container_width=True)
+        with row3b:
+            if "buyback_amount" in yearly.columns and yearly["buyback_amount"].notna().any():
+                st.caption("自己株式の取得(百万円)")
+                buyback_m = _to_million(yearly["buyback_amount"])
+                fig_buyback = go.Figure()
+                fig_buyback.add_bar(x=x, y=buyback_m, name="自己株式取得額", marker_color="#4C72B0",
+                                     text=_labels(buyback_m), **TXT)
+                fig_buyback.update_layout(yaxis=dict(title="金額(百万円)"))
+                st.plotly_chart(_yearly_chart_layout(fig_buyback), use_container_width=True)
+            else:
+                st.caption("自己株式の取得")
+                st.info("自己株式取得のデータがありません")
