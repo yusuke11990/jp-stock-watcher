@@ -518,7 +518,14 @@ if selected_label:
         fig_price = _compact(fig_price, height=340)
         fig_price.update_layout(margin=dict(l=35, r=70, t=28, b=25))
         fig_price.update_yaxes(side="right", tickformat=",")
-        fig_price.update_xaxes(tickformat="%Y/%-m")
+        if period_label == "1ヶ月":
+            # 短期間は月表記だと同じラベルが並んでしまうため、1週間おきに日付を刻む
+            fig_price.update_xaxes(tickformat="%-m/%-d", dtick=7 * 24 * 60 * 60 * 1000)
+        elif period_label in ("3ヶ月", "6ヶ月"):
+            fig_price.update_xaxes(tickformat="%Y/%-m", dtick="M1")
+        else:
+            fig_price.update_xaxes(tickformat="%Y/%-m")
+        fig_price.update_xaxes(hoverformat="%Y/%-m/%-d")
         st.plotly_chart(fig_price, use_container_width=True)
 
     if not decisions.empty:
