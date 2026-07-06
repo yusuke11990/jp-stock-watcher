@@ -8,9 +8,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -121,20 +120,24 @@ if selected_label:
 
     labels = list(CATEGORY_COLS.values())
     values = [row[k] if pd.notna(row[k]) else 0 for k in CATEGORY_COLS.keys()]
-    values += values[:1]
-    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-    angles += angles[:1]
 
     sector_peers = df[df["sector"] == row["sector"]]
     sector_medians = [sector_peers[k].median() for k in CATEGORY_COLS.keys()]
-    sector_medians += sector_medians[:1]
 
-    fig, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(4, 4))
-    ax.plot(angles, values, "o-", linewidth=2, label=f"{row['ticker']} {row['name']}")
-    ax.fill(angles, values, alpha=0.25)
-    ax.plot(angles, sector_medians, "o--", linewidth=1, label=f"{row['sector']} 中央値", color="gray")
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels)
-    ax.set_ylim(0, 100)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
-    st.pyplot(fig)
+    # Plotlyはブラウザ側のフォントで描画するため、サーバーに日本語フォントが
+    # 無い環境(Streamlit Community Cloud等)でも文字化けしない
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values + values[:1], theta=labels + labels[:1],
+        fill="toself", name=f"{row['ticker']} {row['name']}",
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=sector_medians + sector_medians[:1], theta=labels + labels[:1],
+        name=f"{row['sector']} 中央値", line=dict(dash="dash", color="gray"),
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=True,
+        margin=dict(l=40, r=40, t=40, b=40),
+    )
+    st.plotly_chart(fig, use_container_width=True)

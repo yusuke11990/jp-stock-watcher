@@ -7,4 +7,4 @@ openpyxl>=3.1
 xlrd>=2.0
 ta>=0.11
 streamlit>=1.30
-matplotlib>=3.8
+plotly>=5.18
