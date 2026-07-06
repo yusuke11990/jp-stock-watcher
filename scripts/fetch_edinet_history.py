@@ -51,6 +51,7 @@ METRIC_TAG_CANDIDATES = {
     "revenue": [
         "jpcrp_cor:NetSalesSummaryOfBusinessResults",
         "jpcrp_cor:NetSalesIFRSSummaryOfBusinessResults",
+        "jpcrp_cor:RevenueIFRSSummaryOfBusinessResults",
         "jpcrp_cor:OperatingRevenue1SummaryOfBusinessResults",
         "jpcrp_cor:OrdinaryIncomeSummaryOfBusinessResults",
         "jpcrp_cor:OperatingRevenuesIFRSSummaryOfBusinessResults",
@@ -171,10 +172,13 @@ def _find_revenue_fallback(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_rows(result: dict, metric: str, sub: pd.DataFrame) -> bool:
+    """まだ埋まっていない相対年度だけ値を書き込む(優先度の高い候補タグの値を後発候補で上書きしない)"""
     found = False
     for _, row in sub.iterrows():
         rel_year = row["相対年度"]
         if rel_year not in RELATIVE_YEAR_OFFSET:
+            continue
+        if metric in result.get(rel_year, {}):
             continue
         value = pd.to_numeric(row["値"], errors="coerce")
         if pd.notna(value):
@@ -185,19 +189,28 @@ def _apply_rows(result: dict, metric: str, sub: pd.DataFrame) -> bool:
 
 
 def extract_yearly_metrics(df: pd.DataFrame) -> dict:
-    """相対年度ラベル -> {metric: value} の辞書を返す"""
+    """相対年度ラベル -> {metric: value} の辞書を返す。
+
+    IFRS移行期の企業は、同一書類内で古い年度がJ-GAAPタグ・直近年度がIFRSタグという
+    形でタグが混在することがある。以前は候補タグを順に試して最初に1件でも見つかった
+    時点で打ち切っていたため、旧タグで一部年度だけヒットすると新タグ側の残り年度を
+    見に行かず欠損していた。全5相対年度が埋まるまで(または候補を使い切るまで)候補を
+    試し続け、複数タグの結果をマージする。
+    """
     result: dict = {}
+    all_years = set(RELATIVE_YEAR_OFFSET.keys())
     for metric, candidates in METRIC_TAG_CANDIDATES.items():
-        found = False
         for tag in candidates:
+            filled_years = {y for y, m in result.items() if metric in m}
+            if filled_years >= all_years:
+                break
             sub = df[(df["要素ID"] == tag) & df["コンテキストID"].apply(_is_consolidated_context)]
             if sub.empty:
                 continue
-            found = _apply_rows(result, metric, sub)
-            if found:
-                break  # このメトリクスは見つかったので次の候補は試さない
+            _apply_rows(result, metric, sub)
 
-        if not found and metric == "revenue":
+        filled_years = {y for y, m in result.items() if metric in m}
+        if metric == "revenue" and filled_years < all_years:
             # 一部のIFRS大企業は企業固有の拡張タグ(...KeyFinancialData)で売上高を開示するため
             _apply_rows(result, metric, _find_revenue_fallback(df))
 
