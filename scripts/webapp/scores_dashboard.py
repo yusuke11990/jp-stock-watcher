@@ -575,7 +575,7 @@ if selected_label:
             st.plotly_chart(_yearly_chart_layout(fig_div), use_container_width=True)
 
     # --- 3行目: 財務推移, スコア, 業種中央スコア ---
-    row2a, row2b, row2c = st.columns(3)
+    row2a, row2b, row2c = st.columns([2, 1, 1])
     with row2a:
         if not yearly_available:
             st.caption("財務推移")
