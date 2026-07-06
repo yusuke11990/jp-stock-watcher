@@ -36,7 +36,7 @@ PERIOD_YF = {"1ヶ月": "1mo", "3ヶ月": "3mo", "6ヶ月": "6mo", "1年": "1y",
 # 10年分で500MB超になりGitHubコミット運用が破綻するため、意図的にオンデマンド取得にしている)。
 DB_HISTORY_DAYS = 400
 COMPACT_HEIGHT = 230
-YEARLY_HEIGHT = 360
+YEARLY_HEIGHT = 420
 # fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
 YEN_TO_MILLION_COLS = {
     "revenue", "operating_income", "ordinary_income", "net_income",
@@ -85,7 +85,7 @@ def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
     fig.update_yaxes(showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_layout(
         height=YEARLY_HEIGHT,
-        margin=dict(l=45, r=45, t=32, b=40),
+        margin=dict(l=15, r=15, t=32, b=40),
         font=dict(size=13, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif", color="#333"),
         legend=dict(font=dict(size=11), orientation="h", yanchor="bottom", y=1.0),
         plot_bgcolor="white",
@@ -542,7 +542,10 @@ if selected_label:
         cagr_text = f"売上高{len(yearly) - 1}年CAGR: {revenue_cagr * 100:.1f}%" if revenue_cagr is not None else ""
         x = yearly["fy_label"]
         TXT = dict(textposition="outside", textfont=dict(size=10))
-        TXT_LINE = dict(textposition="top center", textfont=dict(size=10))
+
+        def _txt_line(color: str) -> dict:
+            """折れ線の数値ラベルを線の色と揃えて表示する(色以外は凡例で判別できるようにする)"""
+            return dict(textposition="top center", textfont=dict(size=10, color=color))
 
         # --- 2行目: 業績推移, 配当推移 ---
         row1a, row1b = st.columns(2)
@@ -553,12 +556,12 @@ if selected_label:
             fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color="#BBBBBB",
                               text=_labels(revenue_m), **TXT)
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2",
-                                           line=dict(color="#D62728", width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **TXT_LINE))
+                                           line=dict(color="#D62728", width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **_txt_line("#D62728")))
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2",
-                                           line=dict(color="#FF7F0E", width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **TXT_LINE))
+                                           line=dict(color="#FF7F0E", width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **_txt_line("#FF7F0E")))
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["roe"] * 100, name="ROE(%)", yaxis="y2",
-                                           line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **TXT_LINE))
-            fig_perf.update_layout(yaxis=dict(title="売上高(百万円)"), yaxis2=dict(title="利益率(%)", overlaying="y", side="right"))
+                                           line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **_txt_line("#2CA02C")))
+            fig_perf.update_layout(yaxis=dict(), yaxis2=dict(overlaying="y", side="right", showgrid=False))
             st.plotly_chart(_yearly_chart_layout(fig_perf), use_container_width=True)
 
         with row1b:
@@ -567,8 +570,8 @@ if selected_label:
             fig_div.add_bar(x=x, y=yearly["dividend_per_share"], name="1株配当", marker_color="#BBBBBB",
                              text=_labels(yearly["dividend_per_share"], "{:.1f}"), **TXT)
             fig_div.add_trace(go.Scatter(x=x, y=yearly["eps"], name="EPS", yaxis="y2",
-                                          line=dict(color="#D62728", width=2.5), text=_labels(yearly["eps"], "{:.1f}"), **TXT_LINE))
-            fig_div.update_layout(yaxis=dict(title="1株配当(円)"), yaxis2=dict(title="EPS(円)", overlaying="y", side="right"))
+                                          line=dict(color="#D62728", width=2.5), text=_labels(yearly["eps"], "{:.1f}"), **_txt_line("#D62728")))
+            fig_div.update_layout(yaxis=dict(), yaxis2=dict(overlaying="y", side="right", showgrid=False))
             st.plotly_chart(_yearly_chart_layout(fig_div), use_container_width=True)
 
     # --- 3行目: 財務推移, スコア, 業種中央スコア ---
@@ -587,8 +590,8 @@ if selected_label:
             fig_bs.add_bar(x=x, y=liabilities_m, name="負債", marker_color="#DD8452",
                             text=_labels(liabilities_m), **TXT)
             fig_bs.add_trace(go.Scatter(x=x, y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2",
-                                         line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **TXT_LINE))
-            fig_bs.update_layout(barmode="group", yaxis=dict(title="金額(百万円)"), yaxis2=dict(title="自己資本比率(%)", overlaying="y", side="right"))
+                                         line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **_txt_line("#2CA02C")))
+            fig_bs.update_layout(barmode="group", yaxis=dict(), yaxis2=dict(overlaying="y", side="right", showgrid=False))
             st.plotly_chart(_yearly_chart_layout(fig_bs), use_container_width=True)
 
     with row2b:
@@ -624,7 +627,7 @@ if selected_label:
             fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color="#DD8452")
             fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color="#BBBBBB")
             fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF", line=dict(color="#2CA02C", width=2.5)))
-            fig_cf.update_layout(barmode="relative", yaxis=dict(title="金額(百万円)"))
+            fig_cf.update_layout(barmode="relative", yaxis=dict())
             st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
 
         with row3b:
@@ -634,7 +637,7 @@ if selected_label:
                 fig_buyback = go.Figure()
                 fig_buyback.add_bar(x=x, y=buyback_m, name="自己株式取得額", marker_color="#4C72B0",
                                      text=_labels(buyback_m), **TXT)
-                fig_buyback.update_layout(yaxis=dict(title="金額(百万円)"))
+                fig_buyback.update_layout(yaxis=dict())
                 st.plotly_chart(_yearly_chart_layout(fig_buyback), use_container_width=True)
             else:
                 st.caption("自己株式の取得")
