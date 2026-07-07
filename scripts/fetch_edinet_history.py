@@ -247,14 +247,18 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
             payout_ratio = metrics.get("payout_ratio_pct")
             # EDINETの5年サマリー表には負債額そのものは無いが、総資産・純資産は取れるため差分で算出する
             total_liabilities = (total_assets - equity) if total_assets is not None and equity is not None else None
+            operating_cf = metrics.get("operating_cf")
+            investing_cf = metrics.get("investing_cf")
+            # フリーCFもEDINETの5年サマリー表には無いが、営業CF+投資CFで算出できる
+            free_cf = (operating_cf + investing_cf) if operating_cf is not None and investing_cf is not None else None
             conn.execute(
                 """
                 INSERT INTO fundamentals_yearly
                     (ticker, fiscal_year_end, revenue, ordinary_income, net_income,
                      operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
                      total_assets, total_liabilities, equity, equity_ratio,
-                     operating_cf, investing_cf, financing_cf, cash_and_equivalents, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
                     revenue=COALESCE(excluded.revenue, fundamentals_yearly.revenue),
                     ordinary_income=COALESCE(excluded.ordinary_income, fundamentals_yearly.ordinary_income),
@@ -271,6 +275,7 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     operating_cf=COALESCE(excluded.operating_cf, fundamentals_yearly.operating_cf),
                     investing_cf=COALESCE(excluded.investing_cf, fundamentals_yearly.investing_cf),
                     financing_cf=COALESCE(excluded.financing_cf, fundamentals_yearly.financing_cf),
+                    free_cf=COALESCE(excluded.free_cf, fundamentals_yearly.free_cf),
                     cash_and_equivalents=COALESCE(excluded.cash_and_equivalents, fundamentals_yearly.cash_and_equivalents),
                     updated_at=excluded.updated_at
                 """,
@@ -281,7 +286,7 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     metrics.get("eps"), metrics.get("dividend_per_share"), payout_ratio,
                     total_assets, total_liabilities, equity,
                     (equity / total_assets * 100) if equity and total_assets else None,
-                    metrics.get("operating_cf"), metrics.get("investing_cf"), metrics.get("financing_cf"),
+                    operating_cf, investing_cf, metrics.get("financing_cf"), free_cf,
                     metrics.get("cash_and_equivalents"), now_iso,
                 ),
             )
