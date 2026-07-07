@@ -570,8 +570,6 @@ if selected_label:
                                            line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **_txt_line(COLOR_ORANGE)))
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2",
                                            line=dict(color=COLOR_RED, width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **_txt_line(COLOR_RED)))
-            fig_perf.add_trace(go.Scatter(x=x, y=yearly["roe"] * 100, name="ROE(%)", yaxis="y2",
-                                           line=dict(color=COLOR_GREEN, width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **_txt_line(COLOR_GREEN)))
             fig_perf.update_layout(
                 yaxis=dict(tickformat=","),
                 yaxis2=dict(overlaying="y", side="right", showgrid=False, ticksuffix="%"),
@@ -646,13 +644,22 @@ if selected_label:
         row3a, row3b = st.columns(2)
         with row3a:
             st.caption("キャッシュフロー推移(百万円)")
+            operating_cf_m = _to_million(yearly["operating_cf"])
+            investing_cf_m = _to_million(yearly["investing_cf"])
+            financing_cf_m = _to_million(yearly["financing_cf"])
+            cash_m = _to_million(yearly["cash_and_equivalents"])
+            free_cf_m = _to_million(yearly["free_cf"])
             fig_cf = go.Figure()
-            fig_cf.add_bar(x=x, y=_to_million(yearly["operating_cf"]), name="営業CF", marker_color=BAR_BLUE)
-            fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color=BAR_PINK)
-            fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color=BAR_GRAY)
-            fig_cf.add_bar(x=x, y=_to_million(yearly["cash_and_equivalents"]), name="現金・現金等価物", marker_color=BAR_MINT)
-            fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF",
-                                         line=dict(color=COLOR_ORANGE, width=2.5), mode="lines+markers"))
+            fig_cf.add_bar(x=x, y=operating_cf_m, name="営業CF", marker_color=BAR_BLUE,
+                            text=_labels(operating_cf_m), **TXT)
+            fig_cf.add_bar(x=x, y=investing_cf_m, name="投資CF", marker_color=BAR_PINK,
+                            text=_labels(investing_cf_m), **TXT)
+            fig_cf.add_bar(x=x, y=financing_cf_m, name="財務CF", marker_color=BAR_GRAY,
+                            text=_labels(financing_cf_m), **TXT)
+            fig_cf.add_bar(x=x, y=cash_m, name="現金・現金等価物", marker_color=BAR_MINT,
+                            text=_labels(cash_m), **TXT)
+            fig_cf.add_trace(go.Scatter(x=x, y=free_cf_m, name="フリーCF", mode="lines+markers",
+                                         line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(free_cf_m), **_txt_line(COLOR_ORANGE)))
             fig_cf.update_layout(barmode="group", yaxis=dict(tickformat=","))
             st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
 
