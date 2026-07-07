@@ -192,6 +192,16 @@ CREATE TABLE IF NOT EXISTS signal_history (
     PRIMARY KEY (ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_signal_history_date ON signal_history(date);
+
+-- 複数期間のファンダ質的スコアバックテスト用に、価格の長期履歴(yfinance最大10年分)を
+-- 全銘柄分ここに保存する。本番stock.dbのprice_dailyは1年分のみ保持する設計のため分離している。
+CREATE TABLE IF NOT EXISTS price_history (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    close REAL,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_price_history_ticker ON price_history(ticker);
 """
 
 BACKTEST_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "backtest.db"
