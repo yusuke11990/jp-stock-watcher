@@ -55,7 +55,41 @@ def load_data(conn, snapshot_date: str) -> pd.DataFrame:
         else None,
         axis=1,
     )
+    momentum = load_momentum(conn, snapshot_date, df["ticker"].tolist())
+    df = df.merge(momentum, on="ticker", how="left")
     return df
+
+
+def load_momentum(conn, snapshot_date: str, tickers: list[str]) -> pd.DataFrame:
+    """直近1ヶ月を除いた12ヶ月騰落率(12-1モメンタム)。
+    バックテスト(quality_score_v2_backtest.py)で、この市場ではモメンタムより
+    リバーサル(逆張り)方向にICが出ることを確認済みのため、higher_is_better=falseで
+    scoring_config.yamlに登録し、直近12ヶ月で下落した銘柄を高スコアにする。
+    """
+    prices = pd.read_sql_query(
+        "SELECT ticker, date, close FROM price_daily WHERE ticker IN ({}) ORDER BY ticker, date".format(
+            ",".join("?" for _ in tickers)
+        ),
+        conn, params=tickers, parse_dates=["date"],
+    )
+    if prices.empty:
+        return pd.DataFrame({"ticker": [], "momentum_12_1": []})
+
+    snapshot = pd.Timestamp(snapshot_date)
+    skip_date = snapshot - pd.Timedelta(days=30)
+    lookback_date = snapshot - pd.Timedelta(days=365)
+
+    rows = []
+    for ticker, df_t in prices.groupby("ticker"):
+        df_t = df_t.set_index("date")["close"]
+        price_skip = df_t.asof(skip_date)
+        price_lookback = df_t.asof(lookback_date)
+        if pd.isna(price_skip) or pd.isna(price_lookback) or price_lookback == 0:
+            momentum_12_1 = None
+        else:
+            momentum_12_1 = price_skip / price_lookback - 1
+        rows.append({"ticker": ticker, "momentum_12_1": momentum_12_1})
+    return pd.DataFrame(rows)
 
 
 def percentile_rank(series: pd.Series, higher_is_better: bool) -> pd.Series:

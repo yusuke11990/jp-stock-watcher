@@ -298,6 +298,20 @@ def _migrate_decisions_unique_constraint(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE decisions_old")
 
 
+# scoresへ追加するカラム(逆張りモメンタム軸用)。既存DBには起動時にマイグレーションする。
+SCORES_EXTRA_COLUMNS = {
+    "score_momentum": "REAL",
+    "confidence_momentum": "REAL",
+}
+
+
+def _migrate_scores_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(scores)")}
+    for col, coltype in SCORES_EXTRA_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE scores ADD COLUMN {col} {coltype}")
+
+
 def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -305,6 +319,7 @@ def get_connection() -> sqlite3.Connection:
     _migrate_fundamentals_columns(conn)
     _migrate_decisions_unique_constraint(conn)
     _migrate_decisions_columns(conn)
+    _migrate_scores_columns(conn)
     conn.commit()
     return conn
 

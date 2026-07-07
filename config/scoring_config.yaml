@@ -1,12 +1,17 @@
 min_sector_sample_size: 5
 
+# quality_score_v2_backtest.py(2017〜2025年度の9コホート、12ヶ月後リターン)での
+# 単軸IC実測値: valuation=+0.168(圧倒的最強), profitability=+0.034, efficiency=+0.030,
+# shareholder_return=+0.022, safety=+0.015, growth=+0.011, momentum(逆張り)=+0.032
+# を踏まえてIC上位を厚めに配分。growth/safetyは効果が薄かったため縮小した。
 category_weights:
-  safety: 0.15
-  growth: 0.20
-  profitability: 0.20
+  valuation: 0.30
+  profitability: 0.18
   efficiency: 0.15
-  valuation: 0.15
-  shareholder_return: 0.15
+  momentum: 0.15
+  shareholder_return: 0.10
+  safety: 0.07
+  growth: 0.05
 
 grade_thresholds:
   S: 85
@@ -51,3 +56,7 @@ category_metrics:
     - {col: dividend_history_count, higher_is_better: true, weight: 0.10}
     - {col: doe, higher_is_better: true, weight: 0.15}
     - {col: dividend_growth_1y, higher_is_better: true, weight: 0.15}
+  # 直近12ヶ月(直近1ヶ月除く)の株価騰落率。higher_is_better: false = 逆張り
+  # (下落した銘柄ほど高スコア)。バックテストで順張りより逆張り方向にICが出たため。
+  momentum:
+    - {col: momentum_12_1, higher_is_better: false, weight: 1.0}
