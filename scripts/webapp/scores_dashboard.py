@@ -85,6 +85,7 @@ def _compact(fig: go.Figure, height: int = COMPACT_HEIGHT) -> go.Figure:
         legend=dict(font=dict(size=9), orientation="h", yanchor="bottom", y=1.0),
         plot_bgcolor="white",
         hovermode="x unified",
+        hoverlabel=dict(font=dict(size=10, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif")),
     )
     return fig
 
@@ -100,6 +101,7 @@ def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
         legend=dict(font=dict(size=11), orientation="h", yanchor="bottom", y=1.0),
         plot_bgcolor="white",
         hovermode="x unified",
+        hoverlabel=dict(font=dict(size=10, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif")),
         bargap=0.15,
         bargroupgap=0.08,
     )
@@ -108,6 +110,10 @@ def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
             # textを指定していても"text"がmodeに入っていないと表示されないため必ず含める
             trace.mode = "lines+markers+text" if trace.text is not None else "lines+markers"
             trace.marker = dict(size=6)
+        if trace.text is not None:
+            # デフォルトのhoverinfoだと未丸めのyの値とtextの丸め済み表示が重複して出るため、
+            # 系列名+text(チャート上に出しているのと同じ丸め済み文字列)だけに絞る
+            trace.hoverinfo = "name+text"
     return fig
 
 
