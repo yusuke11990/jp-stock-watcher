@@ -37,6 +37,15 @@ PERIOD_YF = {"1ヶ月": "1mo", "3ヶ月": "3mo", "6ヶ月": "6mo", "1年": "1y",
 DB_HISTORY_DAYS = 400
 COMPACT_HEIGHT = 230
 YEARLY_HEIGHT = 420
+# 柔らかいパステル調の共通カラーパレット(線は不透明、棒は半透明にして重なりを見やすくする)
+COLOR_BLUE = "#5B9BD5"
+COLOR_GREEN = "#7CB342"
+COLOR_ORANGE = "#FFA65C"
+COLOR_RED = "#EF6C6C"
+BAR_BLUE = "rgba(91, 155, 213, 0.6)"
+BAR_PINK = "rgba(216, 102, 139, 0.6)"
+BAR_MINT = "rgba(77, 182, 172, 0.6)"
+BAR_GRAY = "rgba(176, 190, 197, 0.7)"
 # fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
 YEN_TO_MILLION_COLS = {
     "revenue", "operating_income", "ordinary_income", "net_income",
@@ -501,8 +510,8 @@ if selected_label:
         fig_price = go.Figure()
         fig_price.add_trace(go.Scatter(
             x=price_hist["date"], y=price_hist["close"], name="株価",
-            line=dict(width=2, color="#1f6fd6"),
-            fill="tozeroy", fillcolor="rgba(31, 111, 214, 0.12)",
+            line=dict(width=2, color=COLOR_BLUE),
+            fill="tozeroy", fillcolor="rgba(91, 155, 213, 0.15)",
         ))
         for action, color, symbol in [("buy", "green", "triangle-up"), ("sell", "red", "triangle-down")]:
             sub = decisions[decisions["action"] == action]
@@ -515,7 +524,7 @@ if selected_label:
         fig_price.add_annotation(
             x=last_row["date"], y=last_row["close"], text=f"  {last_row['close']:,.0f}  ",
             showarrow=False, xanchor="left", yanchor="middle", xshift=4,
-            font=dict(color="white", size=12), bgcolor="#1f6fd6", borderpad=3,
+            font=dict(color="white", size=12), bgcolor=COLOR_BLUE, borderpad=3,
         )
         fig_price = _compact(fig_price, height=340)
         fig_price.update_layout(margin=dict(l=35, r=70, t=28, b=25))
@@ -555,14 +564,14 @@ if selected_label:
             st.caption(f"業績推移(百万円)　{cagr_text}")
             revenue_m = _to_million(yearly["revenue"])
             fig_perf = go.Figure()
-            fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color="#BBBBBB",
+            fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color=BAR_GRAY,
                               text=_labels(revenue_m), **TXT)
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2",
-                                           line=dict(color="#D62728", width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **_txt_line("#D62728")))
+                                           line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **_txt_line(COLOR_ORANGE)))
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["net_margin"] * 100, name="純利益率(%)", yaxis="y2",
-                                           line=dict(color="#FF7F0E", width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **_txt_line("#FF7F0E")))
+                                           line=dict(color=COLOR_RED, width=2.5), text=_labels(yearly["net_margin"] * 100, "{:.2f}%"), **_txt_line(COLOR_RED)))
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["roe"] * 100, name="ROE(%)", yaxis="y2",
-                                           line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **_txt_line("#2CA02C")))
+                                           line=dict(color=COLOR_GREEN, width=2.5), text=_labels(yearly["roe"] * 100, "{:.2f}%"), **_txt_line(COLOR_GREEN)))
             fig_perf.update_layout(
                 yaxis=dict(tickformat=","),
                 yaxis2=dict(overlaying="y", side="right", showgrid=False, ticksuffix="%"),
@@ -572,12 +581,12 @@ if selected_label:
         with row1b:
             st.caption("配当推移(配当・EPS・配当性向)")
             fig_div = go.Figure()
-            fig_div.add_bar(x=x, y=yearly["dividend_per_share"], name="配当", marker_color="#4C72B0",
+            fig_div.add_bar(x=x, y=yearly["dividend_per_share"], name="配当", marker_color=BAR_BLUE,
                              text=_labels(yearly["dividend_per_share"], "{:.1f}"), **TXT)
-            fig_div.add_bar(x=x, y=yearly["eps"], name="EPS", marker_color="#DD8452",
+            fig_div.add_bar(x=x, y=yearly["eps"], name="EPS", marker_color=BAR_PINK,
                              text=_labels(yearly["eps"], "{:.1f}"), **TXT)
             fig_div.add_trace(go.Scatter(x=x, y=yearly["payout_ratio"] * 100, name="配当性向(%)", yaxis="y2",
-                                          line=dict(color="#FFA500", width=2.5), text=_labels(yearly["payout_ratio"] * 100, "{:.0f}%"), **_txt_line("#FFA500")))
+                                          line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(yearly["payout_ratio"] * 100, "{:.0f}%"), **_txt_line(COLOR_ORANGE)))
             fig_div.update_layout(
                 barmode="group",
                 yaxis=dict(tickformat=","),
@@ -596,12 +605,12 @@ if selected_label:
             equity_m = _to_million(yearly["equity"])
             liabilities_m = _to_million(yearly["total_liabilities"])
             fig_bs = go.Figure()
-            fig_bs.add_bar(x=x, y=equity_m, name="純資産", marker_color="#4C72B0",
+            fig_bs.add_bar(x=x, y=equity_m, name="純資産", marker_color=BAR_BLUE,
                             text=_labels(equity_m), **TXT)
-            fig_bs.add_bar(x=x, y=-liabilities_m, name="負債", marker_color="#DD8452",
+            fig_bs.add_bar(x=x, y=-liabilities_m, name="負債", marker_color=BAR_PINK,
                             text=_labels(-liabilities_m), **TXT)
             fig_bs.add_trace(go.Scatter(x=x, y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2",
-                                         line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **_txt_line("#2CA02C")))
+                                         line=dict(color=COLOR_GREEN, width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **_txt_line(COLOR_GREEN)))
             fig_bs.update_layout(
                 barmode="group",
                 yaxis=dict(tickformat=","),
@@ -624,7 +633,7 @@ if selected_label:
         fig_sector = go.Figure()
         fig_sector.add_trace(go.Scatterpolar(
             r=sector_medians + sector_medians[:1], theta=labels + labels[:1], fill="toself",
-            name="業種中央値", line=dict(color="orange"),
+            name="業種中央値", line=dict(color=COLOR_ORANGE),
             text=[f"{v:.0f}({g})" for v, g in zip(sector_medians, sector_median_grades)] + [f"{sector_medians[0]:.0f}"],
             mode="lines+markers+text", textposition="top center",
         ))
@@ -638,12 +647,12 @@ if selected_label:
         with row3a:
             st.caption("キャッシュフロー推移(百万円)")
             fig_cf = go.Figure()
-            fig_cf.add_bar(x=x, y=_to_million(yearly["operating_cf"]), name="営業CF", marker_color="#4C72B0")
-            fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color="#DD8452")
-            fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color="#BBBBBB")
-            fig_cf.add_bar(x=x, y=_to_million(yearly["cash_and_equivalents"]), name="現金・現金等価物", marker_color="#8172B0")
+            fig_cf.add_bar(x=x, y=_to_million(yearly["operating_cf"]), name="営業CF", marker_color=BAR_BLUE)
+            fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color=BAR_PINK)
+            fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color=BAR_GRAY)
+            fig_cf.add_bar(x=x, y=_to_million(yearly["cash_and_equivalents"]), name="現金・現金等価物", marker_color=BAR_MINT)
             fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF",
-                                         line=dict(color="#D62728", width=2.5), mode="lines+markers"))
+                                         line=dict(color=COLOR_ORANGE, width=2.5), mode="lines+markers"))
             fig_cf.update_layout(barmode="group", yaxis=dict(tickformat=","))
             st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
 
@@ -652,7 +661,7 @@ if selected_label:
                 st.caption("自己株式の取得(百万円)")
                 buyback_m = _to_million(yearly["buyback_amount"])
                 fig_buyback = go.Figure()
-                fig_buyback.add_bar(x=x, y=buyback_m, name="自己株式取得額", marker_color="#4C72B0",
+                fig_buyback.add_bar(x=x, y=buyback_m, name="自己株式取得額", marker_color=BAR_BLUE,
                                      text=_labels(buyback_m), **TXT)
                 fig_buyback.update_layout(yaxis=dict(tickformat=","))
                 st.plotly_chart(_yearly_chart_layout(fig_buyback), use_container_width=True)
