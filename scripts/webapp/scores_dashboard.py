@@ -564,7 +564,7 @@ if selected_label:
             st.caption(f"業績推移(百万円)　{cagr_text}")
             revenue_m = _to_million(yearly["revenue"])
             fig_perf = go.Figure()
-            fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color=BAR_GRAY,
+            fig_perf.add_bar(x=x, y=revenue_m, name="売上高", marker_color=BAR_BLUE,
                               text=_labels(revenue_m), **TXT)
             fig_perf.add_trace(go.Scatter(x=x, y=yearly["operating_margin"] * 100, name="営業利益率(%)", yaxis="y2",
                                            line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(yearly["operating_margin"] * 100, "{:.2f}%"), **_txt_line(COLOR_ORANGE)))
