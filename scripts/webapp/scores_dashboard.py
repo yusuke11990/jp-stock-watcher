@@ -598,8 +598,8 @@ if selected_label:
             fig_bs = go.Figure()
             fig_bs.add_bar(x=x, y=equity_m, name="純資産", marker_color="#4C72B0",
                             text=_labels(equity_m), **TXT)
-            fig_bs.add_bar(x=x, y=liabilities_m, name="負債", marker_color="#DD8452",
-                            text=_labels(liabilities_m), **TXT)
+            fig_bs.add_bar(x=x, y=-liabilities_m, name="負債", marker_color="#DD8452",
+                            text=_labels(-liabilities_m), **TXT)
             fig_bs.add_trace(go.Scatter(x=x, y=yearly["equity_ratio"], name="自己資本比率(%)", yaxis="y2",
                                          line=dict(color="#2CA02C", width=2.5), text=_labels(yearly["equity_ratio"], "{:.1f}%"), **_txt_line("#2CA02C")))
             fig_bs.update_layout(
@@ -641,8 +641,10 @@ if selected_label:
             fig_cf.add_bar(x=x, y=_to_million(yearly["operating_cf"]), name="営業CF", marker_color="#4C72B0")
             fig_cf.add_bar(x=x, y=_to_million(yearly["investing_cf"]), name="投資CF", marker_color="#DD8452")
             fig_cf.add_bar(x=x, y=_to_million(yearly["financing_cf"]), name="財務CF", marker_color="#BBBBBB")
-            fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF", line=dict(color="#2CA02C", width=2.5)))
-            fig_cf.update_layout(barmode="relative", yaxis=dict(tickformat=","))
+            fig_cf.add_bar(x=x, y=_to_million(yearly["cash_and_equivalents"]), name="現金・現金等価物", marker_color="#8172B0")
+            fig_cf.add_trace(go.Scatter(x=x, y=_to_million(yearly["free_cf"]), name="フリーCF",
+                                         line=dict(color="#D62728", width=2.5), mode="lines+markers"))
+            fig_cf.update_layout(barmode="group", yaxis=dict(tickformat=","))
             st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
 
         with row3b:
