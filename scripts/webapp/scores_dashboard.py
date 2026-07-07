@@ -26,8 +26,8 @@ CATEGORY_COLS = {
     "score_growth": "成長性",
     "score_profitability": "収益性",
     "score_efficiency": "効率性",
-    "score_valuation": "割安性",
     "score_shareholder_return": "還元性",
+    "score_valuation": "割安性",
 }
 PERIOD_DAYS = {"1ヶ月": 30, "3ヶ月": 90, "6ヶ月": 180, "1年": 365, "3年": 365 * 3, "5年": 365 * 5, "10年": 365 * 10}
 PERIOD_YF = {"1ヶ月": "1mo", "3ヶ月": "3mo", "6ヶ月": "6mo", "1年": "1y", "3年": "3y", "5年": "5y", "10年": "10y"}
@@ -616,14 +616,24 @@ if selected_label:
             )
             st.plotly_chart(_yearly_chart_layout(fig_bs), use_container_width=True)
 
+    RADAR_POLAR_LAYOUT = dict(
+        radialaxis=dict(visible=True, range=[0, 125], tickvals=[0, 20, 40, 60, 80, 100]),
+        angularaxis=dict(rotation=90, direction="clockwise"),
+    )
+
     with row2b:
         fig = go.Figure()
         fig.add_trace(go.Scatterpolar(
             r=values + values[:1], theta=labels + labels[:1], fill="toself", name="本銘柄",
-            text=[f"{v:.0f}({g})" for v, g in zip(values, axis_grades)] + [f"{values[0]:.0f}({axis_grades[0]})"],
+            text=[f"{v:.0f}" for v in values] + [f"{values[0]:.0f}"],
             mode="lines+markers+text", textposition="top center",
         ))
-        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False)
+        fig.add_trace(go.Scatterpolar(
+            r=[112] * len(labels), theta=labels, mode="text", text=axis_grades,
+            textfont=dict(size=24, color=COLOR_RED, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.update_layout(polar=RADAR_POLAR_LAYOUT, showlegend=False)
         st.caption(f"スコア(総合評価 {row['grade']})")
         st.plotly_chart(_compact(fig, height=YEARLY_HEIGHT), use_container_width=True)
 
@@ -632,10 +642,15 @@ if selected_label:
         fig_sector.add_trace(go.Scatterpolar(
             r=sector_medians + sector_medians[:1], theta=labels + labels[:1], fill="toself",
             name="業種中央値", line=dict(color=COLOR_ORANGE),
-            text=[f"{v:.0f}({g})" for v, g in zip(sector_medians, sector_median_grades)] + [f"{sector_medians[0]:.0f}"],
+            text=[f"{v:.0f}" for v in sector_medians] + [f"{sector_medians[0]:.0f}"],
             mode="lines+markers+text", textposition="top center",
         ))
-        fig_sector.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False)
+        fig_sector.add_trace(go.Scatterpolar(
+            r=[112] * len(labels), theta=labels, mode="text", text=sector_median_grades,
+            textfont=dict(size=24, color=COLOR_RED, family="Hiragino Sans, Yu Gothic, Meiryo, sans-serif"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig_sector.update_layout(polar=RADAR_POLAR_LAYOUT, showlegend=False)
         st.caption(f"業種中央スコア({row['sector']})")
         st.plotly_chart(_compact(fig_sector, height=YEARLY_HEIGHT), use_container_width=True)
 
