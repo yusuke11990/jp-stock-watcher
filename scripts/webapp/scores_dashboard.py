@@ -114,6 +114,10 @@ def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
             # デフォルトのhoverinfoだと未丸めのyの値とtextの丸め済み表示が重複して出るため、
             # 系列名+text(チャート上に出しているのと同じ丸め済み文字列)だけに絞る
             trace.hoverinfo = "name+text"
+        if trace.type == "bar":
+            # 複数系列を横に並べると棒が細くなり、Plotlyが outside のラベル文字を
+            # 自動的に縮小してしまうため、常に指定サイズのまま表示させる
+            trace.constraintext = "none"
     return fig
 
 
