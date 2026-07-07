@@ -97,6 +97,7 @@ def compute_ticker_metrics(df_ticker: pd.DataFrame) -> dict | None:
         "asset_turnover": asset_turnover,
         "dividend_growth_1y": dividend_growth_1y,
         "doe_proxy": doe_proxy,
+        "eps": latest.get("eps"),
     }
 
 
