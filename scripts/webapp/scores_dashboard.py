@@ -105,7 +105,8 @@ def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
     )
     for trace in fig.data:
         if trace.type == "scatter" and trace.mode is None:
-            trace.mode = "lines+markers"
+            # textを指定していても"text"がmodeに入っていないと表示されないため必ず含める
+            trace.mode = "lines+markers+text" if trace.text is not None else "lines+markers"
             trace.marker = dict(size=6)
     return fig
 
@@ -626,7 +627,7 @@ if selected_label:
         fig.add_trace(go.Scatterpolar(
             r=values + values[:1], theta=labels + labels[:1], fill="toself", name="本銘柄",
             text=[f"{v:.0f}" for v in values] + [f"{values[0]:.0f}"],
-            mode="lines+markers+text", textposition="top center",
+            mode="lines+markers+text", textposition="top center", textfont=dict(size=10),
         ))
         fig.add_trace(go.Scatterpolar(
             r=[112] * len(labels), theta=labels, mode="text", text=axis_grades,
@@ -643,7 +644,7 @@ if selected_label:
             r=sector_medians + sector_medians[:1], theta=labels + labels[:1], fill="toself",
             name="業種中央値", line=dict(color=COLOR_ORANGE),
             text=[f"{v:.0f}" for v in sector_medians] + [f"{sector_medians[0]:.0f}"],
-            mode="lines+markers+text", textposition="top center",
+            mode="lines+markers+text", textposition="top center", textfont=dict(size=10),
         ))
         fig_sector.add_trace(go.Scatterpolar(
             r=[112] * len(labels), theta=labels, mode="text", text=sector_median_grades,
@@ -673,7 +674,7 @@ if selected_label:
                             text=_labels(financing_cf_m), **TXT)
             fig_cf.add_bar(x=x, y=cash_m, name="現金・現金等価物", marker_color=BAR_MINT,
                             text=_labels(cash_m), **TXT)
-            fig_cf.add_trace(go.Scatter(x=x, y=free_cf_m, name="フリーCF", mode="lines+markers",
+            fig_cf.add_trace(go.Scatter(x=x, y=free_cf_m, name="フリーCF", mode="lines+markers+text",
                                          line=dict(color=COLOR_ORANGE, width=2.5), text=_labels(free_cf_m), **_txt_line(COLOR_ORANGE)))
             fig_cf.update_layout(barmode="group", yaxis=dict(tickformat=","))
             st.plotly_chart(_yearly_chart_layout(fig_cf), use_container_width=True)
