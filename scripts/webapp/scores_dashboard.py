@@ -691,11 +691,11 @@ if selected_label:
 
         with row3b:
             if "buyback_amount" in yearly.columns and yearly["buyback_amount"].notna().any():
-                st.caption("自己株式の取得(百万円)")
-                buyback_m = _to_million(yearly["buyback_amount"])
+                st.caption("自己株式の取得(円)")
+                buyback_yen = yearly["buyback_amount"]
                 fig_buyback = go.Figure()
-                fig_buyback.add_bar(x=x, y=buyback_m, name="自己株式取得額", marker_color=BAR_BLUE,
-                                     text=_labels(buyback_m), **TXT)
+                fig_buyback.add_bar(x=x, y=buyback_yen, name="自己株式取得額", marker_color=BAR_BLUE,
+                                     text=_labels(buyback_yen), **TXT)
                 fig_buyback.update_layout(yaxis=dict(tickformat=","))
                 st.plotly_chart(_yearly_chart_layout(fig_buyback), use_container_width=True)
             else:
