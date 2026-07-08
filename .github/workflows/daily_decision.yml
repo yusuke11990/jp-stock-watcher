@@ -19,13 +19,25 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Check price freshness
+        id: freshness
+        continue-on-error: true
+        run: python scripts/check_price_freshness.py
       - run: python scripts/scoring/compute_scores.py
       - run: python scripts/decisions/decide_rule.py
       - run: python scripts/decisions/decide_composite.py
+        # 価格が古いまま計算した売買判断をDiscordで通知してしまわないよう、
+        # 鮮度チェックが失敗した日は通知をスキップする(スコア計算・DBコミット自体は
+        # 参考情報として続行する)
       - run: python scripts/notify_discord.py
+        if: steps.freshness.outcome == 'success'
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Fail job if price data was stale
+        if: steps.freshness.outcome == 'failure'
+        run: exit 1
       - name: Commit updated DB
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
