@@ -16,7 +16,6 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +25,6 @@ from common.db import get_connection  # noqa: E402
 from common.technical import calc_indicators, check_signals, get_technical_state  # noqa: E402
 
 RULE_VERSION = "v1.0"
-JST = timezone(timedelta(hours=9))
 
 SIGNAL_LABELS = {
     "GC": "ゴールデンクロス",
@@ -44,9 +42,11 @@ class Decision:
     confidence: float
 
 
-def load_price_history(conn, ticker: str) -> pd.DataFrame:
-    query = "SELECT date, open, high, low, close, volume FROM price_daily WHERE ticker = ? ORDER BY date ASC"
-    df = pd.read_sql_query(query, conn, params=(ticker,), parse_dates=["date"])
+def load_price_history(conn, ticker: str, as_of_date: str) -> pd.DataFrame:
+    # as_of_date以前のデータだけに絞らないと、過去のsnapshot_dateを指定して再実行(バックフィル)
+    # した際に、実際には決定時点でまだ存在しなかった未来の株価まで見て判断してしまう
+    query = "SELECT date, open, high, low, close, volume FROM price_daily WHERE ticker = ? AND date <= ? ORDER BY date ASC"
+    df = pd.read_sql_query(query, conn, params=(ticker, as_of_date), parse_dates=["date"])
     if df.empty:
         return df
     df = df.set_index("date").rename(
@@ -149,13 +149,15 @@ def main():
     if args.limit:
         scores_df = scores_df.head(args.limit)
 
-    decision_date = datetime.now(JST).strftime("%Y-%m-%d")
+    # decision_dateはsnapshot_dateと一致させる(通常運用では同日だが、過去日付を
+    # 指定してバックフィルした場合に「今日判断した」と誤って記録されるのを防ぐ)
+    decision_date = snapshot_date
     action_counts = {"buy": 0, "sell": 0, "hold": 0}
     skipped = 0
 
     for _, row in scores_df.iterrows():
         ticker = row["ticker"]
-        hist = load_price_history(conn, ticker)
+        hist = load_price_history(conn, ticker, snapshot_date)
         if len(hist) < 75:
             skipped += 1
             continue

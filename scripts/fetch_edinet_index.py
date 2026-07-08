@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -35,6 +36,16 @@ def _api_key() -> str:
     if not key:
         raise RuntimeError("環境変数EDINET_API_KEYが未設定です")
     return key
+
+
+def _redact_api_key(text: str) -> str:
+    """requestsの例外メッセージにSubscription-Key付きURLが含まれることがあり、
+    そのままprintするとGitHub Actionsのログにキーが残ってしまうため必ずこれを通す。
+    """
+    key = os.environ.get("EDINET_API_KEY")
+    if key:
+        text = text.replace(key, "***")
+    return re.sub(r"Subscription-Key=[^&\s]+", "Subscription-Key=***", text)
 
 
 def already_scanned_dates(conn) -> set:
@@ -119,7 +130,7 @@ def main():
             total_docs += count
             processed += 1
         except Exception as e:
-            print(f"  {d}: 失敗 {e}")
+            print(f"  {d}: 失敗 {_redact_api_key(str(e))}")
         time.sleep(0.2)
         if processed % 50 == 0:
             print(f"[{processed}/{len(all_dates)}] 累計{total_docs}件の書類をインデックス化")

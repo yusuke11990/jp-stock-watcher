@@ -111,6 +111,17 @@ def _api_key() -> str:
     return key
 
 
+def _redact_api_key(text: str) -> str:
+    """requestsの例外メッセージにはSubscription-Key付きの完全なURLが含まれることがあり、
+    そのままDBのfetch_log(git管理下)やActionsのログに書き込むとAPIキーが漏洩するため、
+    エラーメッセージとして保存・出力する前に必ずこれを通す。
+    """
+    key = os.environ.get("EDINET_API_KEY")
+    if key:
+        text = text.replace(key, "***")
+    return re.sub(r"Subscription-Key=[^&\s]+", "Subscription-Key=***", text)
+
+
 def find_indexed_reports(conn, sec_code: str, max_filings: int) -> list[dict]:
     """fetch_edinet_index.pyが構築したローカルインデックスから、期末日が新しい順に
     有価証券報告書を取得する。期末日が近すぎる(同一世代の重複)ものは間引く。
@@ -281,7 +292,9 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                 """,
                 (
                     ticker, fiscal_year_end.isoformat(), revenue, ordinary_income, net_income,
-                    (ordinary_income / revenue) if ordinary_income and revenue else None,
+                    # EDINETの5年サマリー表に営業利益のタグが無いため、経常利益率を営業利益率として
+                    # 誤って書き込んでいた(operating_marginは実際の営業利益を持つyfinance側に委ねる)
+                    None,
                     (net_income / revenue) if net_income and revenue else None,
                     metrics.get("eps"), metrics.get("dividend_per_share"), payout_ratio,
                     total_assets, total_liabilities, equity,
@@ -362,7 +375,7 @@ def main():
             success += 1
         except Exception as e:
             written = 0
-            log_result(conn, run_date, ticker, "failed", str(e))
+            log_result(conn, run_date, ticker, "failed", _redact_api_key(str(e)))
             failed += 1
         if i % 20 == 0:
             print(f"[{i}/{len(targets)}] success={success} failed={failed}")

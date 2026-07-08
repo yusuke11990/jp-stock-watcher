@@ -10,12 +10,21 @@ TOPIX_TICKER = "1306.T"
 MIN_SECTOR_SAMPLE_SIZE = 5
 
 
-def load_price_df(conn, ticker: str, min_rows: int = 80) -> pd.DataFrame:
-    query = """
-    SELECT date, open, high, low, close, volume FROM price_daily
-    WHERE ticker = ? ORDER BY date ASC
-    """
-    df = pd.read_sql_query(query, conn, params=(ticker,), parse_dates=["date"])
+def load_price_df(conn, ticker: str, as_of_date: str | None = None, min_rows: int = 80) -> pd.DataFrame:
+    # as_of_dateを指定しないと、過去のsnapshot_dateでバックフィルした際に決定時点では
+    # まだ存在しなかった未来の株価まで見てレジーム判定してしまう
+    if as_of_date is not None:
+        query = """
+        SELECT date, open, high, low, close, volume FROM price_daily
+        WHERE ticker = ? AND date <= ? ORDER BY date ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(ticker, as_of_date), parse_dates=["date"])
+    else:
+        query = """
+        SELECT date, open, high, low, close, volume FROM price_daily
+        WHERE ticker = ? ORDER BY date ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(ticker,), parse_dates=["date"])
     if len(df) < min_rows:
         return pd.DataFrame()
     df = df.set_index("date").rename(
@@ -24,9 +33,9 @@ def load_price_df(conn, ticker: str, min_rows: int = 80) -> pd.DataFrame:
     return df
 
 
-def market_regime_score(conn) -> dict:
+def market_regime_score(conn, as_of_date: str | None = None) -> dict:
     """TOPIX ETF(1306.T)のトレンドスコアを個別銘柄シグナルの倍率として使う"""
-    df = load_price_df(conn, TOPIX_TICKER)
+    df = load_price_df(conn, TOPIX_TICKER, as_of_date)
     if df.empty:
         return {"topix_trend_score": 0.0, "market_regime_multiplier": 1.0}
 

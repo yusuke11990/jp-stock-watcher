@@ -46,12 +46,6 @@ BAR_BLUE = "rgba(91, 155, 213, 0.6)"
 BAR_PINK = "rgba(216, 102, 139, 0.6)"
 BAR_MINT = "rgba(77, 182, 172, 0.6)"
 BAR_GRAY = "rgba(176, 190, 197, 0.7)"
-# fundamentals_yearlyは円単位で保存されているため、しけなぎ/バフェットコード風の「百万円」表示に変換する
-YEN_TO_MILLION_COLS = {
-    "revenue", "operating_income", "ordinary_income", "net_income",
-    "total_assets", "total_liabilities", "equity",
-    "operating_cf", "investing_cf", "financing_cf", "free_cf", "cash_and_equivalents", "buyback_amount",
-}
 
 st.set_page_config(page_title="日本株スコア一覧", layout="wide")
 st.markdown(
@@ -317,12 +311,20 @@ def _render_clickable_decisions_table(table: pd.DataFrame, key: str) -> None:
         display_table.round(2), use_container_width=True, hide_index=True, height=300,
         on_select="rerun", selection_mode="single-row", key=key,
     )
+    # st.dataframeの選択状態はテーブルごとにウィジェットキーで独立して残り続けるため、
+    # 共通のjump_to_tickerと直接比較すると、買い表・売り表を交互にクリックした際に
+    # 「相手の表が前回選択を再度検知→自分の選択で上書き」を繰り返す無限rerunになる。
+    # テーブルごとに「最後に処理済みの選択」を個別管理して、これを防ぐ。
+    last_seen_key = f"{key}_last_seen"
     if event and event.selection and event.selection.rows:
         clicked_ticker = raw_tickers[event.selection.rows[0]]
-        if clicked_ticker != st.session_state["jump_to_ticker"]:
+        if st.session_state.get(last_seen_key) != clicked_ticker:
+            st.session_state[last_seen_key] = clicked_ticker
             st.session_state["jump_to_ticker"] = clicked_ticker
             st.session_state["jump_pending"] = True
             st.rerun()
+    else:
+        st.session_state[last_seen_key] = None
 
 
 # --- 買い/売り銘柄一覧(このダッシュボードで最も重要なセクション) ---
@@ -434,7 +436,13 @@ selected_label = st.selectbox("銘柄を選択", ticker_options, key="ticker_sel
 
 if selected_label:
     selected_ticker = selected_label.split(" ")[0] + ".T"
-    row = df[df["ticker"] == selected_ticker].iloc[0]
+    matched = df[df["ticker"] == selected_ticker]
+    if matched.empty:
+        # スコア再計算(キャッシュのttl経過後)で選択中の銘柄がscoresから消えた場合、
+        # .iloc[0]でクラッシュせず案内を出して詳細セクションを描画しない
+        st.info("選択中の銘柄は最新のスコアデータに存在しません。銘柄選択をやり直してください。")
+        st.stop()
+    row = matched.iloc[0]
 
     yearly = load_yearly(selected_ticker)
     mix_ratio = (row["per"] * row["pbr"]) if pd.notna(row["per"]) and pd.notna(row["pbr"]) else None
@@ -494,11 +502,16 @@ if selected_label:
 
     # --- レーダーチャート用データ(fundamentals_yearlyの有無に関わらず表示できるよう先に用意) ---
     labels = list(CATEGORY_COLS.values())
-    values = [row[k] if pd.notna(row[k]) else 0 for k in CATEGORY_COLS.keys()]
     axis_grades = [score_to_grade(row[k], _GRADE_THRESHOLDS) or "-" for k in CATEGORY_COLS.keys()]
     sector_peers = df[df["sector"] == row["sector"]]
     sector_medians = [sector_peers[k].median() for k in CATEGORY_COLS.keys()]
     sector_median_grades = [score_to_grade(v, _GRADE_THRESHOLDS) or "-" for v in sector_medians]
+    # スコア欠損(算出不能)の軸を0(=最低評価)として描画すると、グレード表示は「-」なのに
+    # チャートだけ最悪扱いになり矛盾する。欠損軸は業種中央値(無ければ50)で埋めて中立に見せる。
+    values = [
+        row[k] if pd.notna(row[k]) else (sector_medians[i] if pd.notna(sector_medians[i]) else 50)
+        for i, k in enumerate(CATEGORY_COLS.keys())
+    ]
 
     # --- 1行目: 株価 + AI判断日 ---
     period_label = st.radio("株価チャートの期間", list(PERIOD_DAYS.keys()), index=3, horizontal=True)

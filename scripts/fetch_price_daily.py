@@ -71,8 +71,11 @@ def upsert_prices(conn, ticker: str, df: pd.DataFrame) -> int:
                 INSERT INTO price_daily (ticker, date, open, high, low, close, volume)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ticker, date) DO UPDATE SET
-                    open=excluded.open, high=excluded.high, low=excluded.low,
-                    close=excluded.close, volume=excluded.volume
+                    open=COALESCE(excluded.open, price_daily.open),
+                    high=COALESCE(excluded.high, price_daily.high),
+                    low=COALESCE(excluded.low, price_daily.low),
+                    close=excluded.close,
+                    volume=COALESCE(excluded.volume, price_daily.volume)
                 """,
                 (
                     ticker,

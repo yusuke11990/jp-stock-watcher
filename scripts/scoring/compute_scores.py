@@ -116,15 +116,23 @@ def score_payout_ratio(series: pd.Series, group_percentile: pd.Series) -> pd.Ser
     return result
 
 
-def compute_category_score(df_group: pd.DataFrame, metric_defs: list[dict]) -> tuple[pd.Series, pd.Series]:
+def compute_category_score(
+    df_group: pd.DataFrame, metric_defs: list[dict], reference_df: pd.DataFrame | None = None
+) -> tuple[pd.Series, pd.Series]:
+    # reference_dfは百分位ランクを計算する母集団。通常はdf_group自身と同じだが、
+    # __MARKET_WIDE__(業種内サンプル数が足りない銘柄の寄せ集め)の場合は、
+    # 寄せ集め同士だけで比較するとおかしな百分位になるため、市場全体を渡す
+    if reference_df is None:
+        reference_df = df_group
     percentile_cols = {}
     for m in metric_defs:
         col = m["col"]
         if m.get("special") == "payout_ratio_logic":
-            normal_pct = percentile_rank(df_group[col], higher_is_better=True)
-            percentile_cols[col] = score_payout_ratio(df_group[col], normal_pct)
+            normal_pct = percentile_rank(reference_df[col], higher_is_better=True)
+            full_scores = score_payout_ratio(reference_df[col], normal_pct)
         else:
-            percentile_cols[col] = percentile_rank(df_group[col], m["higher_is_better"])
+            full_scores = percentile_rank(reference_df[col], m["higher_is_better"])
+        percentile_cols[col] = full_scores.reindex(df_group.index)
 
     scores = pd.Series(index=df_group.index, dtype=float)
     confidences = pd.Series(index=df_group.index, dtype=float)
@@ -189,8 +197,11 @@ def compute_scores_for_snapshot(conn, snapshot_date: str, config: dict) -> pd.Da
     category_conf_series = {cat: pd.Series(index=df.index, dtype=float) for cat in category_metrics}
 
     for group, df_group in df.groupby("comparison_group"):
+        # __MARKET_WIDE__グループは寄せ集めなので、そのグループ内だけでなく市場全体(df)
+        # を母集団にして百分位を計算する(そうしないと寄せ集め同士の相対比較になってしまう)
+        reference_df = df if group == "__MARKET_WIDE__" else df_group
         for category, metric_defs in category_metrics.items():
-            scores, confidences = compute_category_score(df_group, metric_defs)
+            scores, confidences = compute_category_score(df_group, metric_defs, reference_df=reference_df)
             category_score_series[category].loc[df_group.index] = scores
             category_conf_series[category].loc[df_group.index] = confidences
 
@@ -220,7 +231,11 @@ def upsert_scores(conn, df: pd.DataFrame) -> None:
         return
     cols = [c for c in df.columns]
     placeholders = ", ".join("?" for _ in cols)
-    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in ("ticker", "snapshot_date"))
+    # COALESCEで保護しないと、一時的なデータ欠損(fundamentals_weeklyの取得失敗等)で
+    # そのスナップショットのスコアがNULLになった際、既存の正しいスコアを消してしまう
+    updates = ", ".join(
+        f"{c}=COALESCE(excluded.{c}, scores.{c})" for c in cols if c not in ("ticker", "snapshot_date")
+    )
     with conn:
         for _, row in df.iterrows():
             values = [None if pd.isna(v) else v for v in row[cols]]

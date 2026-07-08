@@ -389,7 +389,12 @@ def upsert_fundamentals(conn, ticker: str, snapshot_date: str, info: dict, extra
     row = {k: (v if k in skip_clean else _clean_numeric(v)) for k, v in row.items()}
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
-    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in ("ticker", "snapshot_date"))
+    # COALESCEで保護しないと、同日再実行時にyfinanceの一時的な取得失敗(None)が
+    # 既存の正しい値を上書きしてしまう(fundamentals_yearlyで実際に起きたのと同じ不具合)
+    updates = ", ".join(
+        f"{c}=COALESCE(excluded.{c}, fundamentals_weekly.{c})"
+        for c in cols if c not in ("ticker", "snapshot_date")
+    )
     with conn:
         conn.execute(
             f"""
