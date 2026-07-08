@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -99,6 +100,37 @@ def log_result(conn, run_date: str, ticker: str, status: str, error_message: str
         )
 
 
+def check_freshness(
+    conn, max_stale_business_days: int = 1, stale_ticker_ratio_threshold: float = 0.1
+) -> tuple[bool, str]:
+    """銘柄ごとの最新取得日が本日から何営業日遅れているかを見て、鮮度を判定する。
+
+    yfinanceをGitHub Actionsのような共有IPのクラウド環境から呼ぶと、直近数日分だけ
+    Close(終値)がNaNで返ってきてupsert_pricesで静かにスキップされることがあり、
+    その場合でも「5日分のうちどれかは非空」なのでticker単位のfetch_logは全件successのまま
+    記録されてしまう(実際に本番で発生した)。全体のMAX(date)だけ見ても、ごく一部の
+    銘柄だけ新しければ「新鮮」に見えて隠れてしまうため、銘柄ごとの遅れを個別に集計し、
+    一定割合以上が遅延していればstale(鮮度異常)と判定する。
+    """
+    today = datetime.now(JST).date()
+    df = pd.read_sql_query("SELECT ticker, MAX(date) AS max_date FROM price_daily GROUP BY ticker", conn)
+    if df.empty:
+        return True, "price_dailyにデータがありません"
+
+    df["max_date"] = pd.to_datetime(df["max_date"]).dt.date
+    df["business_days_behind"] = df["max_date"].apply(
+        lambda d: int(np.busday_count(d, today))
+    )
+    stale_count = int((df["business_days_behind"] > max_stale_business_days).sum())
+    stale_ratio = stale_count / len(df)
+    is_stale = stale_ratio > stale_ticker_ratio_threshold
+    msg = (
+        f"価格データ鮮度チェック: 全{len(df)}銘柄中{stale_count}件({stale_ratio:.0%})が"
+        f"{max_stale_business_days}営業日を超えて遅延しています(最新の取得日: {df['max_date'].max()})"
+    )
+    return is_stale, msg
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None, help="検証用に処理する銘柄数を制限")
@@ -147,8 +179,18 @@ def main():
 
         time.sleep(CHUNK_SLEEP_SEC)
 
-    conn.close()
     print(f"完了: success={total_success}, failed={total_failed}")
+
+    is_stale, freshness_msg = check_freshness(conn)
+    conn.close()
+    print(freshness_msg)
+    if is_stale:
+        # ここでexitしてもDBへの書き込みは既にcommit済みなのでデータは失われない。
+        # ジョブを失敗扱いにしてGitHub Actions上で可視化する(DBコミット自体は
+        # ワークフロー側でif: always()にして継続させる)。
+        print("⚠ 価格データが想定より古いままです。yfinanceがCI環境からのアクセスで"
+              "直近日の終値をNaNで返し、静かにスキップされている可能性があります。")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
