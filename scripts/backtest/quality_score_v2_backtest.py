@@ -43,6 +43,14 @@ CATEGORY_METRICS_V2 = {
     # この市場・期間では継続(モメンタム)ではなく逆張り(リバーサル)方向にICが出るため、
     # higher_is_better=Falseにして直近の下落銘柄を高スコアにする
     "momentum": [("momentum_12_1", False)],
+    # 会計発生高(Sloan Accrual): (純利益-営業CF)/総資産。
+    # 検証結果: 教科書通りの方向(高いほど利益の質が低い=False)だと単軸IC=-0.021と
+    # 逆方向に効き、複合スコアに混ぜるとIC=0.0905→0.0795に悪化。
+    # 方向を反転(True)させても単軸IC=+0.021とごく弱く、均等重みで混ぜると
+    # 複合IC=0.0905→0.0854とやはり悪化(強いバリュー軸の比重を薄めてしまうため)。
+    # → この市場・期間ではバリュートラップ対策として機能しないと判断し、
+    # 本番のscoring_config.yamlには反映していない。
+    "earnings_quality": [("accruals", True)],
 }
 CATEGORY_WEIGHTS_V2 = {cat: 1.0 / len(CATEGORY_METRICS_V2) for cat in CATEGORY_METRICS_V2}
 
@@ -198,7 +206,7 @@ def main():
     print(f"signal_date時点の株価が取れた観測数: {n_with_price}件\n")
 
     # --- ベースライン(クオリティ5軸のみ、12ヶ月フォワード) ---
-    baseline_metrics = {k: v for k, v in CATEGORY_METRICS_V2.items() if k not in ("value", "momentum")}
+    baseline_metrics = {k: v for k, v in CATEGORY_METRICS_V2.items() if k not in ("value", "momentum", "earnings_quality")}
     baseline_weights = {k: 1.0 / len(baseline_metrics) for k in baseline_metrics}
     panel = compute_score_per_cohort(panel, baseline_metrics, baseline_weights, "quality_score_baseline")
 

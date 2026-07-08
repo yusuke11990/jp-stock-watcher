@@ -41,7 +41,7 @@ CATEGORY_WEIGHTS = {
 def load_yearly_panel(conn) -> pd.DataFrame:
     query = """
     SELECT ticker, fiscal_year_end, revenue, net_income, equity, total_assets,
-           equity_ratio, net_margin, dividend_per_share, payout_ratio
+           equity_ratio, net_margin, dividend_per_share, payout_ratio, eps, operating_cf
     FROM fundamentals_yearly
     ORDER BY ticker, fiscal_year_end
     """
@@ -86,6 +86,13 @@ def compute_ticker_metrics(df_ticker: pd.DataFrame) -> dict | None:
         if pd.notna(latest["payout_ratio"]) and roe is not None
         else None
     )
+    # 会計発生高(Sloan Accrual): (純利益-営業CF)/総資産。高いほど利益がキャッシュフローに
+    # 裏付けられておらず「利益の質」が低い(=将来リターンが低い)とされるアノマリー
+    accruals = (
+        (latest["net_income"] - latest["operating_cf"]) / latest["total_assets"]
+        if pd.notna(latest["net_income"]) and pd.notna(latest["operating_cf"]) and pd.notna(latest["total_assets"]) and latest["total_assets"] > 0
+        else None
+    )
 
     return {
         "fiscal_year_end": latest["fiscal_year_end"],
@@ -98,6 +105,7 @@ def compute_ticker_metrics(df_ticker: pd.DataFrame) -> dict | None:
         "dividend_growth_1y": dividend_growth_1y,
         "doe_proxy": doe_proxy,
         "eps": latest.get("eps"),
+        "accruals": accruals,
     }
 
 
