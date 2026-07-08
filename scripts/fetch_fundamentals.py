@@ -308,16 +308,26 @@ def upsert_yearly_fundamentals(conn, ticker: str, data: dict) -> int:
                      buyback_amount, updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
-                    revenue=excluded.revenue, operating_income=excluded.operating_income,
-                    ordinary_income=excluded.ordinary_income, net_income=excluded.net_income,
-                    operating_margin=excluded.operating_margin, net_margin=excluded.net_margin,
-                    eps=excluded.eps, dividend_per_share=excluded.dividend_per_share,
-                    payout_ratio=excluded.payout_ratio, total_assets=excluded.total_assets,
-                    total_liabilities=excluded.total_liabilities, equity=excluded.equity,
-                    equity_ratio=excluded.equity_ratio, operating_cf=excluded.operating_cf,
-                    investing_cf=excluded.investing_cf, financing_cf=excluded.financing_cf,
-                    free_cf=excluded.free_cf, cash_and_equivalents=excluded.cash_and_equivalents,
-                    buyback_amount=excluded.buyback_amount, updated_at=excluded.updated_at
+                    revenue=COALESCE(excluded.revenue, fundamentals_yearly.revenue),
+                    operating_income=COALESCE(excluded.operating_income, fundamentals_yearly.operating_income),
+                    ordinary_income=COALESCE(excluded.ordinary_income, fundamentals_yearly.ordinary_income),
+                    net_income=COALESCE(excluded.net_income, fundamentals_yearly.net_income),
+                    operating_margin=COALESCE(excluded.operating_margin, fundamentals_yearly.operating_margin),
+                    net_margin=COALESCE(excluded.net_margin, fundamentals_yearly.net_margin),
+                    eps=COALESCE(excluded.eps, fundamentals_yearly.eps),
+                    dividend_per_share=COALESCE(excluded.dividend_per_share, fundamentals_yearly.dividend_per_share),
+                    payout_ratio=COALESCE(excluded.payout_ratio, fundamentals_yearly.payout_ratio),
+                    total_assets=COALESCE(excluded.total_assets, fundamentals_yearly.total_assets),
+                    total_liabilities=COALESCE(excluded.total_liabilities, fundamentals_yearly.total_liabilities),
+                    equity=COALESCE(excluded.equity, fundamentals_yearly.equity),
+                    equity_ratio=COALESCE(excluded.equity_ratio, fundamentals_yearly.equity_ratio),
+                    operating_cf=COALESCE(excluded.operating_cf, fundamentals_yearly.operating_cf),
+                    investing_cf=COALESCE(excluded.investing_cf, fundamentals_yearly.investing_cf),
+                    financing_cf=COALESCE(excluded.financing_cf, fundamentals_yearly.financing_cf),
+                    free_cf=COALESCE(excluded.free_cf, fundamentals_yearly.free_cf),
+                    cash_and_equivalents=COALESCE(excluded.cash_and_equivalents, fundamentals_yearly.cash_and_equivalents),
+                    buyback_amount=COALESCE(excluded.buyback_amount, fundamentals_yearly.buyback_amount),
+                    updated_at=excluded.updated_at
                 """,
                 (
                     ticker, fiscal_year_end, revenue, op_income, val(ordinary_income_row), net_income,
