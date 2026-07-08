@@ -93,7 +93,10 @@ def _compact(fig: go.Figure, height: int = COMPACT_HEIGHT) -> go.Figure:
 def _yearly_chart_layout(fig: go.Figure) -> go.Figure:
     """しけなぎ/バフェット・コード風: 全年度を等間隔表示、太めのバー、大きめの文字"""
     fig.update_xaxes(tickangle=-40, showgrid=False, type="category", tickmode="linear", dtick=1)
-    fig.update_yaxes(showgrid=True, gridcolor="#eee", zeroline=False)
+    # 左軸(主軸)だけにグリッド線を出す。右軸(overlayする副軸)にも同じ設定をすると、
+    # 左右で異なる間隔のグリッド線が重なって表示されてしまうため、副軸は明示的に消す
+    fig.update_yaxes(showgrid=True, gridcolor="#eee", zeroline=False, selector=dict(overlaying=None))
+    fig.update_yaxes(showgrid=False, selector=dict(overlaying="y"))
     fig.update_layout(
         height=YEARLY_HEIGHT,
         margin=dict(l=15, r=15, t=32, b=40),
