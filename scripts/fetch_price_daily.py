@@ -100,6 +100,21 @@ def log_result(conn, run_date: str, ticker: str, status: str, error_message: str
         )
 
 
+def prune_old_data(conn, price_retention_days: int = 420, log_retention_days: int = 90) -> tuple[int, int]:
+    """price_daily/fetch_logは何もしないと無期限に増え続けるため、実際に使われている
+    期間(ダッシュボードの最長表示期間DB_HISTORY_DAYS=400+余裕)を超えた古い行を削除する。
+    decisions/fundamentals_weekly/scoresはrule_performance.py等の実績評価で過去分も
+    使われているため、ここでは対象にしない。
+    """
+    today = datetime.now(JST).date()
+    price_cutoff = (today - timedelta(days=price_retention_days)).strftime("%Y-%m-%d")
+    log_cutoff = (today - timedelta(days=log_retention_days)).strftime("%Y-%m-%d")
+    with conn:
+        price_deleted = conn.execute("DELETE FROM price_daily WHERE date < ?", (price_cutoff,)).rowcount
+        log_deleted = conn.execute("DELETE FROM fetch_log WHERE run_date < ?", (log_cutoff,)).rowcount
+    return price_deleted, log_deleted
+
+
 def check_freshness(
     conn, max_stale_business_days: int = 1, stale_ticker_ratio_threshold: float = 0.1
 ) -> tuple[bool, str]:
@@ -180,6 +195,11 @@ def main():
         time.sleep(CHUNK_SLEEP_SEC)
 
     print(f"完了: success={total_success}, failed={total_failed}")
+
+    price_deleted, log_deleted = prune_old_data(conn)
+    if price_deleted or log_deleted:
+        print(f"古いデータを削除: price_daily={price_deleted}行, fetch_log={log_deleted}行")
+        conn.execute("VACUUM")  # DELETEだけでは解放されないページを回収し、DBファイルを実際に縮小する
 
     is_stale, freshness_msg = check_freshness(conn)
     conn.close()
