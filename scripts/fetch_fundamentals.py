@@ -74,11 +74,27 @@ def _get_row(df, candidates: list[str]):
     return None
 
 
+def _first_valid(series):
+    """先頭からNaNでない最初の値を返す。
+
+    yfinanceは決算未確定の最新期をNaN列として含めることがあり、単純にiloc[0]で
+    「最新値」を取るとNaNを拾ってしまう(かつPythonではbool(nan)がTrueになるため
+    `if value`のような真偽値チェックをすり抜けて後続の計算までnanが伝播する)。
+    """
+    if series is None:
+        return None
+    valid = series.dropna()
+    return valid.iloc[0] if len(valid) else None
+
+
 def _first_two(series):
-    """最新期・前期の値を(latest, prev)で返す。無ければNone。"""
-    if series is None or len(series) < 2:
+    """NaNでない最新期・前期の値を(latest, prev)で返す。無ければNone。"""
+    if series is None:
         return None, None
-    return series.iloc[0], series.iloc[1]
+    valid = series.dropna()
+    if len(valid) < 2:
+        return None, None
+    return valid.iloc[0], valid.iloc[1]
 
 
 def _cagr(latest, oldest, years):
@@ -111,23 +127,32 @@ def compute_extra_fields(data: dict) -> dict:
     buyback_row = _get_row(cf, CASHFLOW_LABELS["buyback"])
     operating_cf_row = _get_row(cf, CASHFLOW_LABELS["operating_cf"])
 
-    total_assets = total_assets_row.iloc[0] if total_assets_row is not None and len(total_assets_row) else None
-    equity = equity_row.iloc[0] if equity_row is not None and len(equity_row) else None
-    net_income_latest = net_income_row.iloc[0] if net_income_row is not None and len(net_income_row) else None
+    total_assets = _first_valid(total_assets_row)
+    equity = _first_valid(equity_row)
+    net_income_latest = _first_valid(net_income_row)
 
     result["total_assets"] = total_assets
     result["net_income"] = net_income_latest
-    result["roa"] = (net_income_latest / total_assets) if net_income_latest and total_assets else None
 
-    revenue_latest = revenue_row.iloc[0] if revenue_row is not None and len(revenue_row) else None
-    result["asset_turnover"] = (revenue_latest / total_assets) if revenue_latest and total_assets else None
+    # roa/asset_turnoverはfinancials明細(fin)由来のnet_income_latest/revenue_latestに
+    # 依存しているが、銘柄によってはfinがラベル不一致等で空でも、info経由の
+    # totalRevenue/profitMarginsは取れていることがある(例: 2673.T)。
+    # その場合efficiency軸が丸ごと欠損してしまうため、infoベースの値にフォールバックする。
+    revenue_latest = _first_valid(revenue_row)
+    revenue_fallback = revenue_latest if revenue_latest is not None else info.get("totalRevenue")
 
-    if current_assets_row is not None and current_liabilities_row is not None:
-        ca = current_assets_row.iloc[0] if len(current_assets_row) else None
-        cl = current_liabilities_row.iloc[0] if len(current_liabilities_row) else None
-        result["current_ratio"] = (ca / cl) if ca and cl else None
-    else:
-        result["current_ratio"] = None
+    net_income_fallback = net_income_latest
+    if net_income_fallback is None:
+        net_margin_info = info.get("profitMargins")
+        if net_margin_info is not None and revenue_fallback:
+            net_income_fallback = net_margin_info * revenue_fallback
+
+    result["roa"] = (net_income_fallback / total_assets) if net_income_fallback and total_assets else None
+    result["asset_turnover"] = (revenue_fallback / total_assets) if revenue_fallback and total_assets else None
+
+    ca = _first_valid(current_assets_row)
+    cl = _first_valid(current_liabilities_row)
+    result["current_ratio"] = (ca / cl) if ca and cl else None
 
     # 成長率(直近期 vs 前期)
     rev_latest, rev_prev = _first_two(revenue_row)
@@ -138,23 +163,28 @@ def compute_extra_fields(data: dict) -> dict:
 
     eps = info.get("trailingEps")
     shares = info.get("sharesOutstanding")
+    # NaN(未確定期)を除いた実データだけを使う。年数計算もこの実データ基準で行う
+    net_income_valid = net_income_row.dropna() if net_income_row is not None else None
+    revenue_valid = revenue_row.dropna() if revenue_row is not None else None
+
     eps_prev = None
-    if net_income_row is not None and shares and len(net_income_row) >= 2:
-        eps_prev = net_income_row.iloc[1] / shares
+    if net_income_valid is not None and shares and len(net_income_valid) >= 2:
+        eps_prev = net_income_valid.iloc[1] / shares
     result["eps_growth_1y"] = ((eps - eps_prev) / abs(eps_prev)) if eps and eps_prev else None
 
     # 3年CAGR(取得できた年数分。yfinanceは通常4〜5年分)
-    years_available = len(revenue_row) if revenue_row is not None else 0
+    years_available = len(revenue_valid) if revenue_valid is not None else 0
     result["growth_years_available"] = years_available
-    if revenue_row is not None and years_available >= 2:
+    if revenue_valid is not None and years_available >= 2:
         n = min(years_available, 4) - 1  # 3年分=4期点、無ければ取得可能な期間で代替
-        result["revenue_growth_3y_cagr"] = _cagr(revenue_row.iloc[0], revenue_row.iloc[n], n)
+        result["revenue_growth_3y_cagr"] = _cagr(revenue_valid.iloc[0], revenue_valid.iloc[n], n)
     else:
         result["revenue_growth_3y_cagr"] = None
 
-    if net_income_row is not None and shares and years_available >= 2:
-        n = min(years_available, 4) - 1
-        eps_oldest = net_income_row.iloc[n] / shares
+    eps_years_available = len(net_income_valid) if net_income_valid is not None else 0
+    if net_income_valid is not None and shares and eps_years_available >= 2:
+        n = min(eps_years_available, 4) - 1
+        eps_oldest = net_income_valid.iloc[n] / shares
         result["eps_growth_3y_cagr"] = _cagr(eps, eps_oldest, n) if eps else None
     else:
         result["eps_growth_3y_cagr"] = None
