@@ -23,17 +23,20 @@ ACTION_LABEL = {"buy": "買い", "sell": "売り"}
 
 
 def load_today_actionable_decisions(conn, decision_date: str):
-    # v2(decide_composite.py)は実績評価中のためDiscord通知はv1のみに限定する。
-    # v1/v2比較はrule_performance.pyで確認する。
+    # v2(decide_composite.py)は複数年バックテストで技術タイミング層の頑健性が
+    # 確認できなかったため通知対象に含めない。v3(decide_quality_timing.py)は
+    # グレード×RSI/BB反発の組み合わせが2021〜2026年の全年で頑健と確認済みのため
+    # v1と合わせて通知する。v1/v2/v3の実績比較はrule_performance.pyで確認する。
     query = """
-    SELECT d.ticker, t.name, d.action, d.grade, d.total_score, d.reason, d.price_at_decision, d.confidence
+    SELECT d.ticker, t.name, d.action, d.grade, d.total_score, d.reason, d.price_at_decision, d.confidence,
+           d.rule_version
     FROM decisions d
     JOIN tickers t ON t.ticker = d.ticker
-    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.rule_version = 'v1.0'
+    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.rule_version IN ('v1.0', 'v3.0')
       AND d.action IN ('buy', 'sell')
-    ORDER BY d.confidence DESC
+    ORDER BY d.rule_version, d.confidence DESC
     """
-    cols = ["ticker", "name", "action", "grade", "total_score", "reason", "price_at_decision", "confidence"]
+    cols = ["ticker", "name", "action", "grade", "total_score", "reason", "price_at_decision", "confidence", "rule_version"]
     return [dict(zip(cols, row)) for row in conn.execute(query, (decision_date,))]
 
 
@@ -48,6 +51,7 @@ def build_embed(decision: dict) -> dict:
             {"name": "総合スコア", "value": f"{decision['total_score']:.1f}" if decision["total_score"] is not None else "-", "inline": True},
             {"name": "株価", "value": f"{decision['price_at_decision']:,.0f}" if decision["price_at_decision"] else "-", "inline": True},
             {"name": "確信度", "value": f"{decision['confidence']:.0%}", "inline": True},
+            {"name": "エンジン", "value": decision["rule_version"], "inline": True},
         ],
     }
 

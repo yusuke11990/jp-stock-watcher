@@ -26,6 +26,7 @@ jobs:
       - run: python scripts/scoring/compute_scores.py
       - run: python scripts/decisions/decide_rule.py
       - run: python scripts/decisions/decide_composite.py
+      - run: python scripts/decisions/decide_quality_timing.py
         # 価格が古いまま計算した売買判断をDiscordで通知してしまわないよう、
         # 鮮度チェックが失敗した日は通知をスキップする(スコア計算・DBコミット自体は
         # 参考情報として続行する)

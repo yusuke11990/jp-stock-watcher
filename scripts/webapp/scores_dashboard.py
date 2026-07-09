@@ -335,10 +335,15 @@ if today_decisions.empty:
     st.info("判断データがありません。先にdecide_rule.py/decide_composite.pyを実行してください。")
 else:
     versions = sorted(today_decisions["rule_version"].dropna().unique().tolist())
-    default_version = "v2.0" if "v2.0" in versions else versions[0]
+    default_version = "v3.0" if "v3.0" in versions else versions[0]
     version_sel = st.radio(
         "判断エンジン", versions, index=versions.index(default_version),
-        horizontal=True, help="v1.0=グレード×二値シグナル(実績重視)、v2.0=連続値テクニカル合成(検証中)",
+        horizontal=True,
+        help=(
+            "v1.0=グレード×二値シグナル(実績重視)、v2.0=連続値テクニカル合成(複数年バックテストで"
+            "頑健性が確認できず非推奨)、v3.0=グレードS/A/B×RSI/BB反発(2021〜2026年の全年で"
+            "頑健な優位性を確認済み、推奨)"
+        ),
     )
     st.caption(f"判断基準日(decision_date): {decision_date}")
 
@@ -358,6 +363,23 @@ else:
         sell_df = version_df[version_df["判断"] == "sell"].drop(columns=["判断", "rule_version"])
         st.markdown(f"**売り候補 ({len(sell_df)}件)**")
         _render_clickable_decisions_table(sell_df, key=f"sell_table_{version_sel}")
+
+st.divider()
+
+# --- 総合スコアランキング(「良い銘柄を見つけて長めに持つ」ためのメイン導線) ---
+st.subheader("総合スコアランキング")
+RANKING_TOP_N = 50
+ranking_df = df.sort_values("total_score", ascending=False).head(RANKING_TOP_N).copy()
+ranking_df["コード"] = ranking_df["ticker"]
+ranking_display = ranking_df.rename(columns={
+    "name": "銘柄名", "sector": "業種", "market": "市場", "price": "株価",
+    "per": "PER", "pbr": "PBR", "roe": "ROE", "dividend_yield": "配当利回り",
+    "total_score": "総合スコア", "grade": "グレード",
+    "sector_rank": "業種内順位", "sector_size": "業種銘柄数",
+})[["コード", "銘柄名", "業種", "市場", "株価", "PER", "PBR", "ROE", "配当利回り",
+    "総合スコア", "グレード", "業種内順位", "業種銘柄数"]]
+st.caption(f"総合スコア上位{RANKING_TOP_N}件(行をクリックすると詳細に移動します)")
+_render_clickable_decisions_table(ranking_display, key="score_ranking_table")
 
 st.divider()
 
