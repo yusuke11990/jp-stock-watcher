@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -70,12 +71,28 @@ def send_to_discord(webhook_url: str, decisions: list[dict], dry_run: bool = Fal
         for chunk in chunked(decisions, MAX_EMBEDS_PER_MESSAGE):
             payloads.append({"embeds": [build_embed(d) for d in chunk]})
 
-    for payload in payloads:
+    for i, payload in enumerate(payloads):
         if dry_run:
             print(payload)
             continue
-        resp = requests.post(webhook_url, json=payload, timeout=15)
-        resp.raise_for_status()
+        if i > 0:
+            # Discordのwebhookレート制限(概ね5リクエスト/2秒)に引っかからないよう、
+            # 通知件数が多い日にメッセージを連続送信する際は間隔を空ける
+            time.sleep(1)
+        for attempt in range(3):
+            resp = requests.post(webhook_url, json=payload, timeout=15)
+            if resp.status_code == 429:
+                # 429時はDiscordが返すRetry-After(秒)だけ待ってから再試行する。
+                # これをせずraise_for_status()を素通しすると、通知失敗が
+                # ワークフロー全体をexit code 1で止めてしまう(実際に本番で発生した)
+                retry_after = float(resp.headers.get("Retry-After", 2))
+                print(f"  レート制限(429)。{retry_after:.1f}秒待って再試行します({attempt + 1}/3)")
+                time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
 
 
 def main():
