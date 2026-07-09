@@ -206,11 +206,28 @@ CREATE INDEX IF NOT EXISTS idx_price_history_ticker ON price_history(ticker);
 
 BACKTEST_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "backtest.db"
 
+# price_history(元はclose列のみ)へ、テクニカルシグナルv2の完全再現(ADX/ATR/出来高等)に
+# 必要なOHLV列を追加する。close列は既存データを保持したままマイグレーションする。
+BACKTEST_PRICE_HISTORY_EXTRA_COLUMNS = {
+    "open": "REAL",
+    "high": "REAL",
+    "low": "REAL",
+    "volume": "REAL",
+}
+
+
+def _migrate_backtest_price_history_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(price_history)")}
+    for col, coltype in BACKTEST_PRICE_HISTORY_EXTRA_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE price_history ADD COLUMN {col} {coltype}")
+
 
 def get_backtest_connection() -> sqlite3.Connection:
     BACKTEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(BACKTEST_DB_PATH)
     conn.executescript(BACKTEST_SCHEMA)
+    _migrate_backtest_price_history_columns(conn)
     conn.commit()
     return conn
 
