@@ -29,7 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.db import get_backtest_connection  # noqa: E402
 from common.technical import calc_indicators  # noqa: E402
 
-HORIZONS = {"5営業日": 5, "10営業日": 10, "21営業日": 21, "63営業日": 63}
+HORIZONS = {
+    "5営業日": 5, "10営業日": 10, "21営業日": 21, "63営業日": 63,
+    "126営業日(6ヶ月)": 126, "252営業日(12ヶ月)": 252, "504営業日(24ヶ月)": 504,
+}
 NEUTRAL_THRESHOLD_PCT = 2.0
 MIN_ROWS = 100
 
