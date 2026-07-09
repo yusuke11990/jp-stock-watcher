@@ -60,6 +60,26 @@ def check_signals(df: pd.DataFrame) -> list[dict]:
     return signals
 
 
+NEAR_52W_HIGH_WINDOW = 252  # 約1年分の営業日
+NEAR_52W_HIGH_THRESHOLD = 0.95  # 52週高値の何%まで接近したら「近い」とみなすか
+
+
+def check_near_52_week_high(df: pd.DataFrame) -> bool:
+    """株価が52週高値の95%圏内に、今日初めて入った(=前日は入っていなかった)かを判定する。
+
+    backtest/alt_signals_check.pyでの検証結果: グレードB/C×割安性上位50%と組み合わせた場合、
+    GC(ゴールデンクロス)より24ヶ月保有で明確に優位(+8pt超、2022-2024年の全年で頑健)。
+    行動ファイナンスで知られる「52週高値モメンタム」(George & Hwang, 2004)と整合する。
+    """
+    if df.empty or len(df) < NEAR_52W_HIGH_WINDOW // 2:
+        return False
+    rolling_high = df["Close"].rolling(NEAR_52W_HIGH_WINDOW, min_periods=NEAR_52W_HIGH_WINDOW // 2).max()
+    near_high = df["Close"] >= rolling_high * NEAR_52W_HIGH_THRESHOLD
+    if len(near_high) < 2 or pd.isna(near_high.iloc[-1]):
+        return False
+    return bool(near_high.iloc[-1] and not near_high.iloc[-2])
+
+
 def get_technical_state(df: pd.DataFrame) -> dict:
     """decide_rule.pyでMA25/MA75割れ判定に使う補助情報"""
     if df.empty or len(df) < 75:
