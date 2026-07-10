@@ -12,7 +12,6 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -300,7 +299,6 @@ st.caption(f"データ基準日(snapshot_date): {snapshot_date}　対象銘柄�
 
 st.session_state.setdefault("jump_to_ticker", None)
 st.session_state.setdefault("jump_pending", False)
-st.session_state.setdefault("scroll_pending", False)
 
 
 def _render_clickable_decisions_table(table: pd.DataFrame, key: str) -> None:
@@ -417,7 +415,11 @@ st.session_state.setdefault("last_auto_search", None)
 if search:
     search_scope = df[df["name"].str.contains(search, na=False) | df["ticker"].str.contains(search, na=False)]
     search_tickers = search_scope["ticker"].unique()
-    if len(search_tickers) == 1 and st.session_state["last_auto_search"] != search:
+    if (
+        len(search_tickers) == 1
+        and st.session_state["last_auto_search"] != search
+        and not st.session_state["jump_pending"]
+    ):
         st.session_state["last_auto_search"] = search
         st.session_state["jump_to_ticker"] = search_tickers[0]
         st.session_state["jump_pending"] = True
@@ -443,7 +445,6 @@ if filters_active:
     )
     st.divider()
 
-st.markdown('<div id="stock-detail-anchor"></div>', unsafe_allow_html=True)
 st.subheader("個別銘柄の詳細")
 
 ticker_options = (filtered["ticker"].str.replace(".T", "", regex=False) + " " + filtered["name"].fillna("")).tolist()
@@ -463,22 +464,6 @@ if st.session_state["jump_pending"]:
             ticker_options = [jump_label] + ticker_options
         st.session_state["ticker_selectbox"] = jump_label
     st.session_state["jump_pending"] = False
-    st.session_state["scroll_pending"] = True
-
-if st.session_state.get("scroll_pending"):
-    st.session_state["scroll_pending"] = False
-    components.html(
-        """
-        <script>
-            setTimeout(function () {
-                var doc = window.parent.document;
-                var el = doc.getElementById("stock-detail-anchor");
-                if (el) { el.scrollIntoView({behavior: "smooth", block: "start"}); }
-            }, 150);
-        </script>
-        """,
-        height=0,
-    )
 
 selected_label = st.selectbox("銘柄を選択", ticker_options, key="ticker_selectbox")
 
