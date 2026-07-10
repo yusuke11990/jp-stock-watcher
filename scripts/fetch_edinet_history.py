@@ -101,6 +101,16 @@ METRIC_TAG_CANDIDATES = {
         "jpcrp_cor:CashAndCashEquivalentsIFRSSummaryOfBusinessResults",
         "jpcrp_cor:CashAndCashEquivalentsSummaryOfBusinessResults",
     ],
+    # 貸借対照表本体のタグ(jppfs_cor)。「経営指標等の推移」表(jpcrp_cor)と異なり
+    # 当期末・前期末の2期分しか開示されないため、RELATIVE_YEAR_OFFSETのうち
+    # 当期末・前期末しか埋まらない。全期間を切れ目なくカバーするには、書類の
+    # 取得間隔を狭める(find_indexed_reportsのDEDUP_MIN_GAP_DAYS参照)必要がある。
+    "current_assets": [
+        "jppfs_cor:CurrentAssets",
+    ],
+    "investment_securities": [
+        "jppfs_cor:InvestmentSecurities",
+    ],
 }
 
 
@@ -122,6 +132,14 @@ def _redact_api_key(text: str) -> str:
     return re.sub(r"Subscription-Key=[^&\s]+", "Subscription-Key=***", text)
 
 
+# 選択する書類同士の最小間隔。current_assets/investment_securitiesは貸借対照表本体の
+# タグで当期末・前期末の2期分しか取れないため、3年間隔(旧設定)だと間の1年が
+# 埋まらない。2年未満の間隔にしておけば、隣接する書類同士の当期末・前期末が
+# 途切れなく繋がる(例: 2024年3月期の書類が2024・2023年度分、2022年3月期の
+# 書類が2022・2021年度分をカバーし、2024→2022年の2年間隔で歯抜けなし)。
+DEDUP_MIN_GAP_DAYS = 365 * 2 - 30
+
+
 def find_indexed_reports(conn, sec_code: str, max_filings: int) -> list[dict]:
     """fetch_edinet_index.pyが構築したローカルインデックスから、期末日が新しい順に
     有価証券報告書を取得する。期末日が近すぎる(同一世代の重複)ものは間引く。
@@ -139,8 +157,8 @@ def find_indexed_reports(conn, sec_code: str, max_filings: int) -> list[dict]:
     last_period_end = None
     for doc_id, period_end_str in rows:
         period_end = datetime.strptime(period_end_str, "%Y-%m-%d").date()
-        if last_period_end is not None and (last_period_end - period_end).days < 365 * 3:
-            continue  # 同じ~5年世代内の重複書類はスキップ
+        if last_period_end is not None and (last_period_end - period_end).days < DEDUP_MIN_GAP_DAYS:
+            continue  # 直近で選択済みの書類と間隔が近すぎる重複書類はスキップ
         selected.append({"docID": doc_id, "periodEnd": period_end_str})
         last_period_end = period_end
         if len(selected) >= max_filings:
@@ -268,8 +286,9 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     (ticker, fiscal_year_end, revenue, ordinary_income, net_income,
                      operating_margin, net_margin, eps, dividend_per_share, payout_ratio,
                      total_assets, total_liabilities, equity, equity_ratio,
-                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     operating_cf, investing_cf, financing_cf, free_cf, cash_and_equivalents,
+                     current_assets, investment_securities, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, fiscal_year_end) DO UPDATE SET
                     revenue=COALESCE(excluded.revenue, fundamentals_yearly.revenue),
                     ordinary_income=COALESCE(excluded.ordinary_income, fundamentals_yearly.ordinary_income),
@@ -288,6 +307,8 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     financing_cf=COALESCE(excluded.financing_cf, fundamentals_yearly.financing_cf),
                     free_cf=COALESCE(excluded.free_cf, fundamentals_yearly.free_cf),
                     cash_and_equivalents=COALESCE(excluded.cash_and_equivalents, fundamentals_yearly.cash_and_equivalents),
+                    current_assets=COALESCE(excluded.current_assets, fundamentals_yearly.current_assets),
+                    investment_securities=COALESCE(excluded.investment_securities, fundamentals_yearly.investment_securities),
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -300,14 +321,15 @@ def upsert_yearly(conn, ticker: str, period_end: "datetime.date", yearly_metrics
                     total_assets, total_liabilities, equity,
                     (equity / total_assets * 100) if equity and total_assets else None,
                     operating_cf, investing_cf, metrics.get("financing_cf"), free_cf,
-                    metrics.get("cash_and_equivalents"), now_iso,
+                    metrics.get("cash_and_equivalents"),
+                    metrics.get("current_assets"), metrics.get("investment_securities"), now_iso,
                 ),
             )
             written += 1
     return written
 
 
-def fetch_ticker_history(conn, ticker: str, sec_code: str, lookback_filings: int = 3) -> int:
+def fetch_ticker_history(conn, ticker: str, sec_code: str, lookback_filings: int = 5) -> int:
     """ローカルインデックスから対象銘柄の有価証券報告書を探し、CSVをダウンロードして取り込む"""
     docs = find_indexed_reports(conn, sec_code, lookback_filings)
     total_written = 0
@@ -352,7 +374,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tickers", nargs="+", default=None, help="例: 7203.T 1301.T 8306.T (省略時は全銘柄をローリング処理)")
     parser.add_argument("--limit", type=int, default=None, help="ローリング処理する銘柄数の上限(検証用)")
-    parser.add_argument("--lookback-filings", type=int, default=3)
+    parser.add_argument("--lookback-filings", type=int, default=5)
     parser.add_argument("--time-budget-sec", type=int, default=20 * 60)
     args = parser.parse_args()
 

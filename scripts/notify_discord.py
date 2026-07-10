@@ -26,14 +26,17 @@ ACTION_LABEL = {"buy": "買い", "sell": "売り"}
 def load_today_actionable_decisions(conn, decision_date: str):
     # v2(decide_composite.py)は複数年バックテストで技術タイミング層の頑健性が
     # 確認できなかったため通知対象に含めない。v3(decide_quality_timing.py)は
-    # グレード×RSI/BB反発の組み合わせが2021〜2026年の全年で頑健と確認済みのため
-    # v1と合わせて通知する。v1/v2/v3の実績比較はrule_performance.pyで確認する。
+    # グレード×52週高値接近×割安性上位50%の組み合わせが2022〜2024年の全年で頑健と
+    # 確認済みのため通知する。v4(decide_quality_timing_v4.py)はv3にネットキャッシュ
+    # 比率上位1/3を加えたもので、24ヶ月保有リターンがv3をさらに上回ることを
+    # net_cash_ratio_kiyohara.pyで確認済み(2022〜2024年の全年で頑健)なので合わせて通知する。
+    # v1/v2/v3/v4の実績比較はrule_performance.pyで確認する。
     query = """
     SELECT d.ticker, t.name, d.action, d.grade, d.total_score, d.reason, d.price_at_decision, d.confidence,
            d.rule_version
     FROM decisions d
     JOIN tickers t ON t.ticker = d.ticker
-    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.rule_version IN ('v1.0', 'v3.0')
+    WHERE d.decision_date = ? AND d.decision_source = 'rule' AND d.rule_version IN ('v1.0', 'v3.0', 'v4.0')
       AND d.action IN ('buy', 'sell')
     ORDER BY d.rule_version, d.confidence DESC
     """

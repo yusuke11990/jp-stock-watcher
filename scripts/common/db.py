@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS fundamentals_yearly (
     free_cf REAL,
     cash_and_equivalents REAL,
     buyback_amount REAL,
+    current_assets REAL,
+    investment_securities REAL,
     updated_at TEXT,
     PRIMARY KEY (ticker, fiscal_year_end)
 );
@@ -270,6 +272,11 @@ def _migrate_fundamentals_columns(conn: sqlite3.Connection) -> None:
     existing_yearly = {row[1] for row in conn.execute("PRAGMA table_info(fundamentals_yearly)")}
     if "buyback_amount" not in existing_yearly:
         conn.execute("ALTER TABLE fundamentals_yearly ADD COLUMN buyback_amount REAL")
+    # 清原達郎『わが投資術』・へム『「増配」株投資』が共に重視する
+    # ネットキャッシュ比率(流動資産+投資有価証券×0.7-負債)÷時価総額の算出に必要
+    for col in ("current_assets", "investment_securities"):
+        if col not in existing_yearly:
+            conn.execute(f"ALTER TABLE fundamentals_yearly ADD COLUMN {col} REAL")
 
 
 # decisionsへ追加するカラム(v2合成エンジン用)。既存DBには起動時にマイグレーションする。
