@@ -6,20 +6,33 @@ scripts/backtest/near_52w_high_robustness_backtest.py等で頑健性を確認済
 共に「最強の武器」として挙げる**ネットキャッシュ比率**をさらに重ねられるか検証した
 (scripts/backtest/net_cash_ratio_kiyohara.py)。
 
-清原氏の定義: ネットキャッシュ比率 = (流動資産 + 0.7×投資有価証券 - 負債) / 時価総額
-(投資有価証券は売却時の税負担を見込んで70%評価)
+清原氏の定義:
+  ネットキャッシュ比率 = (流動資産 + 0.7×投資有価証券 - 負債) / 時価総額
+  (投資有価証券は売却時の税負担を見込んで70%評価。原著p.51で確認済み)
+  キャッシュニュートラルPER = PER × (1 - ネットキャッシュ比率)  (原著p.52)
 
-v3のコホート(グレードB/C×52週高値接近×割安性上位50%)内をこの指標でさらに
-三分位に分けたところ、24ヶ月保有で低位+53.05%(中央値+33.78%)に対し
-上位+70.38%(中央値+51.59%)と、これまで検証した中でも最大級の差が出た。
-2022〜2024年の全年で頑健(低 vs 高: 49.47/63.66、47.71/69.91、64.41/76.00)。
+当初はネットキャッシュ比率単体で三分位に分けて上位1/3を採用していたが
+(24ヶ月保有で低位+53.05%に対し上位+70.38%、2022〜2024年の全年で頑健)、
+原著どおりPERとの複合指標である**キャッシュニュートラルPER**で五分位に
+分けたところ、さらに大きな差が確認できた
+(scripts/backtest/cash_neutral_per_true.py)。24ヶ月保有でQ1(最割安)+78.47%
+(中央値+56.04%)に対しQ5(最割高)+47.99%(中央値+34.35%)、2022〜2024年の
+全年で頑健(Q1/Q5: 71.99/54.35、76.52/43.89、87.85/52.01)。単純な比率よりも
+複合指標の方が原著の主張により忠実かつ効果も大きいため、本エンジンは
+キャッシュニュートラルPERを採用する。
 
-本エンジンはv3の条件に「ネットキャッシュ比率がその日の対象銘柄群の上位1/3」を
-追加する。current_assets・investment_securitiesはEDINETの貸借対照表本体タグ
-(jppfs_cor:CurrentAssets/InvestmentSecurities)から取得しており、
+本エンジンはv3の条件に「キャッシュニュートラルPERがその日の対象銘柄群の
+下位40%(五分位のQ1+Q2相当)」を追加する。
+
+**既知の制約(重要)**: current_assets・investment_securitiesはEDINETの貸借対照表
+本体タグ(jppfs_cor:CurrentAssets/InvestmentSecurities)から取得しており、
 「経営指標等の推移」表と異なり当期末・前期末の2期分しか開示されないため、
-全銘柄をカバーしきれない(欠損は約3割)。データが無い銘柄は判定不能として
-buyにしない(v3のscore_valuation欠損時と同じ、安全側=fail-closedの扱い)。
+全銘柄をカバーしきれない(active銘柄の約70%、2,477/3,549)。特に**銀行業(0%)・
+保険業(7.1%)はほぼ完全にデータが取れない**(貸借対照表の構造が流動/固定資産の
+区分を使わないため)。これは概念的にも妥当で、ネットキャッシュ比率は「本業に
+使われていない余剰現金」を測る指標なので、預金・貸出金が本業そのものである
+銀行に適用する意味自体が薄い。データが無い銘柄は判定不能としてbuyにしない
+(v3のscore_valuation欠損時と同じ、安全側=fail-closedの扱い)。
 """
 
 from __future__ import annotations
@@ -40,7 +53,7 @@ RULE_VERSION = "v4.0"
 TARGET_GRADES = {"B", "C"}
 MIN_HISTORY_ROWS = 126  # 52週高値判定に必要な最低限の遡り日数(check_near_52_week_highのmin_periodsと合わせる)
 INVESTMENT_SECURITIES_HAIRCUT = 0.7  # 投資有価証券は売却時の税負担を見込んで70%評価(清原式)
-NET_CASH_TOP_FRACTION = 1.0 / 3.0  # バックテストで検証した上位1/3(三分位の「高」)を採用
+CASH_NEUTRAL_PER_BOTTOM_FRACTION = 0.4  # バックテストで検証したQ1+Q2相当(下位40%)を採用
 
 
 @dataclass
@@ -62,7 +75,7 @@ def load_price_history(conn, ticker: str, as_of_date: str) -> pd.DataFrame:
 
 def load_latest_scores(conn, snapshot_date: str) -> pd.DataFrame:
     query = """
-    SELECT s.ticker, s.total_score, s.grade, s.score_valuation, f.market_cap
+    SELECT s.ticker, s.total_score, s.grade, s.score_valuation, f.market_cap, f.per
     FROM scores s
     LEFT JOIN fundamentals_weekly f ON f.ticker = s.ticker AND f.snapshot_date = s.snapshot_date
     WHERE s.snapshot_date = ?
@@ -90,21 +103,29 @@ def compute_net_cash_ratio(current_assets, investment_securities, total_liabilit
     return (current_assets + INVESTMENT_SECURITIES_HAIRCUT * investment_securities - total_liabilities) / market_cap
 
 
+def compute_cash_neutral_per(per, net_cash_ratio):
+    if per is None or pd.isna(per) or per <= 0 or net_cash_ratio is None or pd.isna(net_cash_ratio):
+        return None
+    return per * (1 - net_cash_ratio)
+
+
 def decide_quality_timing_v4(
     grade: str, total_score: float, score_valuation, valuation_median: float,
-    near_52w_high: bool, net_cash_ratio, net_cash_cutoff: float,
+    near_52w_high: bool, cash_neutral_per, cash_neutral_per_cutoff: float,
 ) -> Decision:
     is_cheap_enough = score_valuation is not None and pd.notna(score_valuation) and score_valuation >= valuation_median
-    is_cash_rich = net_cash_ratio is not None and pd.notna(net_cash_ratio) and net_cash_ratio >= net_cash_cutoff
-    if grade in TARGET_GRADES and near_52w_high and is_cheap_enough and is_cash_rich:
+    is_cash_neutral_cheap = (
+        cash_neutral_per is not None and pd.notna(cash_neutral_per) and cash_neutral_per <= cash_neutral_per_cutoff
+    )
+    if grade in TARGET_GRADES and near_52w_high and is_cheap_enough and is_cash_neutral_cheap:
         reason = (
             f"グレード{grade}(総合スコア{total_score:.1f}、割安性{score_valuation:.0f})で52週高値圏へ接近、"
-            f"かつネットキャッシュ比率{net_cash_ratio * 100:.1f}%が上位1/3圏内"
+            f"かつキャッシュニュートラルPER{cash_neutral_per:.1f}倍が下位40%圏内"
             "(1〜2年保有のバックテストで頑健な優位性を確認済み)"
         )
         return Decision("buy", reason, 0.65)
-    if grade in TARGET_GRADES and near_52w_high and is_cheap_enough and net_cash_ratio is None:
-        return Decision("hold", f"グレード{grade}、条件はB/C×52週高値×割安性を満たすがネットキャッシュ比率データなし", 0.3)
+    if grade in TARGET_GRADES and near_52w_high and is_cheap_enough and cash_neutral_per is None:
+        return Decision("hold", f"グレード{grade}、条件はB/C×52週高値×割安性を満たすがキャッシュニュートラルPERデータなし(銀行・保険業等は取得不可)", 0.3)
     return Decision("hold", f"グレード{grade}、条件を満たさず", 0.3)
 
 
@@ -153,13 +174,18 @@ def main():
         ),
         axis=1,
     )
+    scores_df["cash_neutral_per"] = scores_df.apply(
+        lambda r: compute_cash_neutral_per(r["per"], r["net_cash_ratio"]), axis=1
+    )
 
-    # 割安性の中央値・ネットキャッシュ比率のカットオフは、本日のグレードB/C対象銘柄群の
+    # 割安性の中央値・キャッシュニュートラルPERのカットオフは、本日のグレードB/C対象銘柄群の
     # 中で相対的に決める(固定しきい値ではなく、その日の相場・銘柄構成に応じて動的に決まる)
     target_df = scores_df[scores_df["grade"].isin(TARGET_GRADES)]
     valuation_median = target_df["score_valuation"].median()
-    net_cash_valid = target_df["net_cash_ratio"].dropna()
-    net_cash_cutoff = net_cash_valid.quantile(1 - NET_CASH_TOP_FRACTION) if not net_cash_valid.empty else float("inf")
+    cash_neutral_per_valid = target_df["cash_neutral_per"].dropna()
+    cash_neutral_per_cutoff = (
+        cash_neutral_per_valid.quantile(CASH_NEUTRAL_PER_BOTTOM_FRACTION) if not cash_neutral_per_valid.empty else float("-inf")
+    )
 
     decision_date = snapshot_date
     action_counts = {"buy": 0, "hold": 0}
@@ -174,12 +200,12 @@ def main():
 
         hist = calc_indicators(hist)
         near_52w_high = check_near_52_week_high(hist)
-        flags = {"near_52_week_high": near_52w_high, "net_cash_ratio": row["net_cash_ratio"]}
+        flags = {"near_52_week_high": near_52w_high, "cash_neutral_per": row["cash_neutral_per"]}
         technical = get_technical_state(hist)
 
         decision = decide_quality_timing_v4(
             row["grade"], row["total_score"], row["score_valuation"], valuation_median,
-            near_52w_high, row["net_cash_ratio"], net_cash_cutoff,
+            near_52w_high, row["cash_neutral_per"], cash_neutral_per_cutoff,
         )
         upsert_decision(conn, ticker, decision_date, decision, row["total_score"], row["grade"], flags, technical.get("current_price"))
         action_counts[decision.action] += 1
@@ -187,7 +213,7 @@ def main():
     conn.close()
     print(f"snapshot_date={snapshot_date}, decision_date={decision_date}, rule_version={RULE_VERSION}")
     print(f"割安性中央値(グレードB/C対象): {valuation_median:.1f}")
-    print(f"ネットキャッシュ比率カットオフ(上位1/3、グレードB/C対象): {net_cash_cutoff * 100:.1f}% (データ有り{len(net_cash_valid)}/{len(target_df)}件)")
+    print(f"キャッシュニュートラルPERカットオフ(下位40%、グレードB/C対象): {cash_neutral_per_cutoff:.1f}倍 (データ有り{len(cash_neutral_per_valid)}/{len(target_df)}件)")
     print(f"action分布: {action_counts}, 履歴不足でスキップ: {skipped}")
 
 
