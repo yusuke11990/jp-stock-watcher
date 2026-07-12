@@ -1,11 +1,13 @@
 yfinance>=0.2.40
-pandas>=2.0
+pandas>=2.0,<3.0
+numpy>=1.24,<2.0
+pyarrow>=14.0,<17.0
 requests>=2.31
 tenacity>=8.2
 PyYAML>=6.0
 openpyxl>=3.1
 xlrd>=2.0
 ta>=0.11
-streamlit>=1.30
+streamlit>=1.30,<1.50
 plotly>=5.18
-scipy>=1.11
+scipy>=1.11,<1.14
