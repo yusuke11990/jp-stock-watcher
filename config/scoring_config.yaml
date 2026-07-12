@@ -1,5 +1,14 @@
 min_sector_sample_size: 5
 
+# 業種内パーセンタイルだけだと「業種全体が絶対的に割安/割高」という情報が消える
+# (例: 海運業は全社PBR1倍割れなので、業種内順位では日本郵船のPBR0.71倍が中位止まり)。
+# scripts/backtest/valuation_score_blend_backtest.py で検証: 2021-2025年度の全コホートで
+# 業種内→市場全体パーセンタイルへ寄せるほどIC・五分位スプレッドが単調改善(前半/後半に
+# 分割しても同じ傾向、過学習ではなさそう)。ただし完全に市場全体(1.0)にすると銀行・REIT等
+# 構造的にPBR/PERが低い業種に偏るリスクがあるため、0.5(半々)で妥協。valuation以外は未検証。
+category_market_blend_weight:
+  valuation: 0.5
+
 # quality_score_v2_backtest.py(2017〜2025年度の9コホート、12ヶ月後リターン)での
 # 単軸IC実測値: valuation=+0.168(圧倒的最強), profitability=+0.034, efficiency=+0.030,
 # shareholder_return=+0.022, safety=+0.015, growth=+0.011, momentum(逆張り)=+0.032

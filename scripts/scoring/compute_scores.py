@@ -117,13 +117,23 @@ def score_payout_ratio(series: pd.Series, group_percentile: pd.Series) -> pd.Ser
 
 
 def compute_category_score(
-    df_group: pd.DataFrame, metric_defs: list[dict], reference_df: pd.DataFrame | None = None
+    df_group: pd.DataFrame,
+    metric_defs: list[dict],
+    reference_df: pd.DataFrame | None = None,
+    market_df: pd.DataFrame | None = None,
+    market_blend_weight: float = 0.0,
 ) -> tuple[pd.Series, pd.Series]:
     # reference_dfは百分位ランクを計算する母集団。通常はdf_group自身と同じだが、
     # __MARKET_WIDE__(業種内サンプル数が足りない銘柄の寄せ集め)の場合は、
     # 寄せ集め同士だけで比較するとおかしな百分位になるため、市場全体を渡す
     if reference_df is None:
         reference_df = df_group
+    # market_blend_weight>0の場合、業種内(reference_df)パーセンタイルに市場全体(market_df)
+    # パーセンタイルを混ぜる。業種内順位だけだと「業種全体が絶対的に割安/割高」という情報が
+    # 消えてしまうため(scripts/backtest/valuation_score_blend_backtest.pyで実証、
+    # 2021-2025年度の全コホートでIC・五分位スプレッドが単調改善、前半/後半分割検証でも頑健)。
+    # ただし完全に市場全体寄り(weight=1.0)にすると業種構造上の歪み(銀行のPBRが構造的に
+    # 低い等)に弱くなるため0.5で妥協している(config/scoring_config.yaml参照)。
     percentile_cols = {}
     for m in metric_defs:
         col = m["col"]
@@ -132,7 +142,19 @@ def compute_category_score(
             full_scores = score_payout_ratio(reference_df[col], normal_pct)
         else:
             full_scores = percentile_rank(reference_df[col], m["higher_is_better"])
-        percentile_cols[col] = full_scores.reindex(df_group.index)
+        full_scores = full_scores.reindex(df_group.index)
+
+        if market_blend_weight > 0 and market_df is not None and m.get("special") != "payout_ratio_logic":
+            market_scores = percentile_rank(market_df[col], m["higher_is_better"]).reindex(df_group.index)
+            both = full_scores.notna() & market_scores.notna()
+            blended = full_scores.copy()
+            blended[both] = (1 - market_blend_weight) * full_scores[both] + market_blend_weight * market_scores[both]
+            # 業種内側が欠けて市場全体側だけ値がある場合は市場全体側をそのまま使う
+            sector_missing = full_scores.isna() & market_scores.notna()
+            blended[sector_missing] = market_scores[sector_missing]
+            full_scores = blended
+
+        percentile_cols[col] = full_scores
 
     scores = pd.Series(index=df_group.index, dtype=float)
     confidences = pd.Series(index=df_group.index, dtype=float)
@@ -192,6 +214,7 @@ def compute_scores_for_snapshot(conn, snapshot_date: str, config: dict) -> pd.Da
     category_metrics = config["category_metrics"]
     category_weights = config["category_weights"]
     grade_thresholds = config["grade_thresholds"]
+    market_blend_weights = config.get("category_market_blend_weight", {})
 
     category_score_series = {cat: pd.Series(index=df.index, dtype=float) for cat in category_metrics}
     category_conf_series = {cat: pd.Series(index=df.index, dtype=float) for cat in category_metrics}
@@ -201,7 +224,11 @@ def compute_scores_for_snapshot(conn, snapshot_date: str, config: dict) -> pd.Da
         # を母集団にして百分位を計算する(そうしないと寄せ集め同士の相対比較になってしまう)
         reference_df = df if group == "__MARKET_WIDE__" else df_group
         for category, metric_defs in category_metrics.items():
-            scores, confidences = compute_category_score(df_group, metric_defs, reference_df=reference_df)
+            blend_weight = market_blend_weights.get(category, 0.0)
+            scores, confidences = compute_category_score(
+                df_group, metric_defs, reference_df=reference_df,
+                market_df=df if blend_weight > 0 else None, market_blend_weight=blend_weight,
+            )
             category_score_series[category].loc[df_group.index] = scores
             category_conf_series[category].loc[df_group.index] = confidences
 
