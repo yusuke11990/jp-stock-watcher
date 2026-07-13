@@ -37,13 +37,19 @@ category_metrics:
     - {col: interest_bearing_debt_to_market_cap, higher_is_better: false, weight: 0.20}
     - {col: net_debt_to_ebitda, higher_is_better: false, weight: 0.15}
     - {col: interest_coverage_ratio, higher_is_better: true, weight: 0.15}
+  # growth: サブ指標ごとの単独IC検証(scripts/backtest/sector_neutral_metrics_backtest.py、
+  # 業種内パーセンタイル・12ヶ月後リターン)で、3年CAGR系(revenue_growth_3y_cagr/
+  # eps_growth_3y_cagr)が業種調整後もIC-0.02〜-0.03と弱い逆行を残す一方、1年成長系は
+  # IC+0.02〜+0.04で健全と判明。総合スコアレベルでの検証(total_score_reweight_
+  # validation.py)でも、この重み変更単体でIC改善(12ヶ月+0.0019、24ヶ月+0.0014、
+  # 2021-2024年度で頑健、2025年度のみ横ばい)を確認済み。
   growth:
-    - {col: revenue_growth_1y, higher_is_better: true, weight: 0.20}
-    - {col: revenue_growth_3y_cagr, higher_is_better: true, weight: 0.25}
-    - {col: operating_income_growth_1y, higher_is_better: true, weight: 0.15}
-    - {col: ordinary_income_growth_1y, higher_is_better: true, weight: 0.15}
-    - {col: eps_growth_1y, higher_is_better: true, weight: 0.15}
-    - {col: eps_growth_3y_cagr, higher_is_better: true, weight: 0.10}
+    - {col: revenue_growth_1y, higher_is_better: true, weight: 0.25}
+    - {col: revenue_growth_3y_cagr, higher_is_better: true, weight: 0.05}
+    - {col: operating_income_growth_1y, higher_is_better: true, weight: 0.20}
+    - {col: ordinary_income_growth_1y, higher_is_better: true, weight: 0.25}
+    - {col: eps_growth_1y, higher_is_better: true, weight: 0.20}
+    - {col: eps_growth_3y_cagr, higher_is_better: true, weight: 0.05}
   profitability:
     - {col: roe, higher_is_better: true, weight: 0.25}
     - {col: operating_margin, higher_is_better: true, weight: 0.25}
@@ -58,13 +64,20 @@ category_metrics:
     - {col: pbr, higher_is_better: false, weight: 0.30}
     - {col: psr, higher_is_better: false, weight: 0.20}
     - {col: pcfr, higher_is_better: false, weight: 0.15}
+  # shareholder_return: サブ指標ごとの単独IC検証(scripts/backtest/
+  # shareholder_return_metrics_backtest.py・sector_neutral_metrics_backtest.py)で
+  # dividend_yield/total_shareholder_return_yield/dividend_history_countが業種内
+  # パーセンタイルでもIC+0.12〜+0.21と強く5年間安定している一方、doe/payout_ratioは
+  # +0.01程度でほぼ無効(当初「逆行」と見えたのは業種構成の偏りによる見せかけと判明、
+  # 反転はせず単に弱いだけと訂正)と判明。総合スコアレベルの検証でもこの重み変更単体で
+  # IC改善(12ヶ月+0.0008、24ヶ月+0.0035)を確認済み。
   shareholder_return:
-    - {col: dividend_yield, higher_is_better: true, weight: 0.25}
-    - {col: payout_ratio, special: payout_ratio_logic, weight: 0.15}
-    - {col: total_shareholder_return_yield, higher_is_better: true, weight: 0.20}
-    - {col: dividend_history_count, higher_is_better: true, weight: 0.10}
-    - {col: doe, higher_is_better: true, weight: 0.15}
-    - {col: dividend_growth_1y, higher_is_better: true, weight: 0.15}
+    - {col: dividend_yield, higher_is_better: true, weight: 0.35}
+    - {col: payout_ratio, special: payout_ratio_logic, weight: 0.05}
+    - {col: total_shareholder_return_yield, higher_is_better: true, weight: 0.25}
+    - {col: dividend_history_count, higher_is_better: true, weight: 0.20}
+    - {col: doe, higher_is_better: true, weight: 0.05}
+    - {col: dividend_growth_1y, higher_is_better: true, weight: 0.10}
   # 直近12ヶ月(直近1ヶ月除く)の株価騰落率。higher_is_better: false = 逆張り
   # (下落した銘柄ほど高スコア)。バックテストで順張りより逆張り方向にICが出たため。
   momentum:
