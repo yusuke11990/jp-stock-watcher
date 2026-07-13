@@ -11,7 +11,8 @@ scripts/backtest/technical_signal_event_study.pyで保有期間を21営業日〜
 
 1. scripts/backtest/grade_breakdown_check.py的な検証(GC発生時のグレード別リターン):
    グレードSは「クオリティ・トラップ」でむしろ最も成績が悪く(12ヶ月中央値+5.22%)、
-   グレードB/Cの方が明確に良い(B:+11.77%、C:+10.47%)と判明。
+   グレードB/Cの方が明確に良い(B:+11.77%、C:+10.47%)と判明 → **後に誤りと判明、
+   下記の訂正を参照**。
 2. scripts/backtest/fundamental_plus_timing_backtest.py + alt_signals_check的な検証:
    グレードB/C×割安性上位50%の中で、GCと代替シグナル(株価のMA75上抜け、MA75の
    傾き反転、52週高値接近、GC強化版)を比較した結果、**52週高値の95%圏内への接近**が
@@ -19,15 +20,27 @@ scripts/backtest/technical_signal_event_study.pyで保有期間を21営業日〜
    判明した。行動ファイナンスで知られる「52週高値モメンタム」(George & Hwang, 2004)
    と整合する結果。
 
+【訂正】上記1.の「グレードSはクオリティ・トラップ」は誤りだった。原因は
+GC発生時にグレードSとなる観測がパネル全体でわずか10件(GCイベントは16件)しか
+無く、統計的に無意味なサンプルサイズだったため。実際に本番シグナル(52週高値接近)
+で再検証すると、グレードが高いほどリターンも高い(12ヶ月・割安性上位50%条件下の
+平均: S+61.0%[n=27] > A+33.6%[n=1213] > B+25.9%[n=8798] > C+23.2%[n=11037]、
+24ヶ月も同順)。市場に「評価され尽くしている」なら割安性スコア(PER/PBR等の
+相対パーセンタイル)も低く出るはずだが、実際はグレードが高いほど割安性スコアの
+分布も高め(S平均72.6、A平均58.4、B平均54.8、C平均49.3)であり、質の高さと
+割安性が両立するケースがむしろ強いという素直な結果だった。
+
 本エンジンはこれらの検証結果を反映し、以下のシンプルなルールを採用する:
-  グレードがB/C かつ 52週高値の95%圏内に本日初めて接近 かつ
+  グレードがS/A/B/C かつ 52週高値の95%圏内に本日初めて接近 かつ
   割安性スコアがその日の対象銘柄群の中央値以上 -> buy
   それ以外 -> hold
 
 GC・MACD・出来高急増・RSI/BB反発は個別検証で今回の想定保有期間(1〜2年)には
-及ばなかったため使わない。グレードSも「クオリティ・トラップ」のため意図的に除外する。
-「良い銘柄を長く持つ」というコンセプトのため、積極的な売り推奨(sell)は設けない
-(保有継続中の警戒情報が欲しければv1のsellロジックを別途参照する)。
+及ばなかったため使わない。グレードD/Eは割安性以外の質的側面(安全性・成長性等)が
+弱く、上記検証でも対象外(そもそも52週高値接近×割安性上位という組み合わせ自体が
+質の低い銘柄には起こりにくい)。「良い銘柄を長く持つ」というコンセプトのため、
+積極的な売り推奨(sell)は設けない(保有継続中の警戒情報が欲しければv1のsell
+ロジックを別途参照する)。
 """
 
 from __future__ import annotations
@@ -45,7 +58,7 @@ from common.db import get_connection  # noqa: E402
 from common.technical import calc_indicators, check_near_52_week_high, get_technical_state  # noqa: E402
 
 RULE_VERSION = "v3.0"
-TARGET_GRADES = {"B", "C"}
+TARGET_GRADES = {"S", "A", "B", "C"}
 MIN_HISTORY_ROWS = 126  # 52週高値判定に必要な最低限の遡り日数(check_near_52_week_highのmin_periodsと合わせる)
 
 
@@ -119,7 +132,7 @@ def main():
     if args.limit:
         scores_df = scores_df.head(args.limit)
 
-    # 割安性の中央値は、本日のグレードB/C対象銘柄群の中で相対的に決める
+    # 割安性の中央値は、本日のグレードS/A/B/C対象銘柄群の中で相対的に決める
     # (固定しきい値ではなく、その日の相場・銘柄構成に応じて動的に決まる)
     target_df = scores_df[scores_df["grade"].isin(TARGET_GRADES)]
     valuation_median = target_df["score_valuation"].median()
@@ -148,7 +161,7 @@ def main():
 
     conn.close()
     print(f"snapshot_date={snapshot_date}, decision_date={decision_date}, rule_version={RULE_VERSION}")
-    print(f"割安性中央値(グレードB/C対象): {valuation_median:.1f}")
+    print(f"割安性中央値(グレードS/A/B/C対象): {valuation_median:.1f}")
     print(f"action分布: {action_counts}, 履歴不足でスキップ: {skipped}")
 
 

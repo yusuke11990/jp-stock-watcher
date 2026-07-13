@@ -22,7 +22,12 @@ scripts/backtest/near_52w_high_robustness_backtest.py等で頑健性を確認済
 キャッシュニュートラルPERを採用する。
 
 本エンジンはv3の条件に「キャッシュニュートラルPERがその日の対象銘柄群の
-下位40%(五分位のQ1+Q2相当)」を追加する。
+下位40%(五分位のQ1+Q2相当)」を追加する。対象グレードもv3の訂正
+(decide_quality_timing.py参照。グレードSは「クオリティ・トラップ」という
+当初の結論がn=16の統計的に無意味なサンプルに基づく誤りだったと判明し、
+実際は52週高値接近×割安性上位50%条件下でグレードが高いほどリターンも
+高い[S+61.0%>A+33.6%>B+25.9%>C+23.2%、12ヶ月平均]ことを確認済み)に
+合わせてS/A/B/Cに拡張する。
 
 **既知の制約(重要)**: current_assets・investment_securitiesはEDINETの貸借対照表
 本体タグ(jppfs_cor:CurrentAssets/InvestmentSecurities)から取得しており、
@@ -50,7 +55,7 @@ from common.db import get_connection  # noqa: E402
 from common.technical import calc_indicators, check_near_52_week_high, get_technical_state  # noqa: E402
 
 RULE_VERSION = "v4.0"
-TARGET_GRADES = {"B", "C"}
+TARGET_GRADES = {"S", "A", "B", "C"}
 MIN_HISTORY_ROWS = 126  # 52週高値判定に必要な最低限の遡り日数(check_near_52_week_highのmin_periodsと合わせる)
 INVESTMENT_SECURITIES_HAIRCUT = 0.7  # 投資有価証券は売却時の税負担を見込んで70%評価(清原式)
 CASH_NEUTRAL_PER_BOTTOM_FRACTION = 0.4  # バックテストで検証したQ1+Q2相当(下位40%)を採用
@@ -178,7 +183,7 @@ def main():
         lambda r: compute_cash_neutral_per(r["per"], r["net_cash_ratio"]), axis=1
     )
 
-    # 割安性の中央値・キャッシュニュートラルPERのカットオフは、本日のグレードB/C対象銘柄群の
+    # 割安性の中央値・キャッシュニュートラルPERのカットオフは、本日のグレードS/A/B/C対象銘柄群の
     # 中で相対的に決める(固定しきい値ではなく、その日の相場・銘柄構成に応じて動的に決まる)
     target_df = scores_df[scores_df["grade"].isin(TARGET_GRADES)]
     valuation_median = target_df["score_valuation"].median()
@@ -212,8 +217,8 @@ def main():
 
     conn.close()
     print(f"snapshot_date={snapshot_date}, decision_date={decision_date}, rule_version={RULE_VERSION}")
-    print(f"割安性中央値(グレードB/C対象): {valuation_median:.1f}")
-    print(f"キャッシュニュートラルPERカットオフ(下位40%、グレードB/C対象): {cash_neutral_per_cutoff:.1f}倍 (データ有り{len(cash_neutral_per_valid)}/{len(target_df)}件)")
+    print(f"割安性中央値(グレードS/A/B/C対象): {valuation_median:.1f}")
+    print(f"キャッシュニュートラルPERカットオフ(下位40%、グレードS/A/B/C対象): {cash_neutral_per_cutoff:.1f}倍 (データ有り{len(cash_neutral_per_valid)}/{len(target_df)}件)")
     print(f"action分布: {action_counts}, 履歴不足でスキップ: {skipped}")
 
 
